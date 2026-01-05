@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate
+    volumes:
+      - ./migrations:/migrations 
+    command:
+      - -path=/migrations/
+      - -database=postgres://user:password@db:5432/mydb?sslmode=disable
+      - up
+    depends_on:
+      db:
+        condition: service_healthy
+      
+  server:
+    build: .
+    environment:
+      DATABASE_URL: postgres://user:password@db:5432/mydb?sslmode=disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+  client:
+    build:
+      context: ../client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      server:
+        condition: service_started
