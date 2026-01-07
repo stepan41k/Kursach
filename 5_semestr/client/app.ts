@@ -19,6 +19,8 @@ interface Window {
 	// Сотрудники (Админка)
 	showAddEmployeeForm: () => void
 	submitNewEmployee: () => Promise<void>
+
+	applyLogFilters: () => void
 }
 
 // --- 2. INTERFACES ---
@@ -75,15 +77,36 @@ interface LoanContract {
 // --- 3. API SERVICE ---
 
 class ApiService {
+	// Метод для выполнения запросов с токеном
 	private async request(endpoint: string, method: string = 'GET', body?: any) {
 		try {
+			// 1. Получаем токен из хранилища
+			const token = localStorage.getItem('authToken')
+
+			const headers: HeadersInit = {
+				'Content-Type': 'application/json',
+			}
+
+			// 2. Если токен есть, добавляем заголовок
+			if (token) {
+				headers['Authorization'] = `Bearer ${token}`
+			}
+
 			const opts: RequestInit = {
 				method,
-				headers: { 'Content-Type': 'application/json' },
+				headers,
 			}
+
 			if (body) opts.body = JSON.stringify(body)
 
 			const res = await fetch(`${API_URL}${endpoint}`, opts)
+
+			// 3. Если сервер вернул 401 (Unauthorized), значит токен протух -> разлогиниваем
+			if (res.status === 401) {
+				window.logout()
+				throw new Error('Сессия истекла. Войдите снова.')
+			}
+
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ error: res.statusText }))
 				throw new Error(err.error || res.statusText)
@@ -97,24 +120,46 @@ class ApiService {
 	}
 
 	async login(l: string, p: string) {
-		return this.request('/login', 'POST', { login: l, password: p })
+		// Логин — это особый запрос, он идет без токена
+		try {
+			const res = await fetch(`${API_URL}/login`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ login: l, password: p }),
+			})
+
+			if (!res.ok) throw new Error('Ошибка входа')
+
+			const data = await res.json()
+
+			// 4. СОХРАНЯЕМ ТОКЕН
+			if (data.token) {
+				localStorage.setItem('authToken', data.token)
+			}
+
+			return data
+		} catch (e) {
+			alert('Неверный логин или пароль')
+			return null
+		}
 	}
 
-	// Используем существующий эндпоинт регистрации для создания сотрудников админом
+	// Все остальные методы используют обертку this.request и автоматически шлют токен
+	async register(d: any) {
+		return this.request('/register', 'POST', d)
+	}
 	async createEmployee(d: any) {
 		return this.request('/register', 'POST', d)
 	}
 	async getEmployees() {
 		return this.request('/employees') || []
 	}
-
 	async getClients() {
 		return this.request('/clients') || []
 	}
 	async createClient(c: any) {
 		return this.request('/clients', 'POST', c)
 	}
-
 	async getProducts() {
 		return this.request('/products') || []
 	}
@@ -126,6 +171,10 @@ class ApiService {
 	}
 	async getSchedule(id: number) {
 		return this.request(`/loans/${id}/schedule`) || []
+	}
+	async getLogs(filters: any = {}) {
+		const params = new URLSearchParams(filters).toString()
+		return this.request(`/logs?${params}`) || []
 	}
 
 	calculatePreview(amount: number, rate: number, months: number) {
@@ -193,10 +242,16 @@ function renderLayout(content: string, activeTab: string) {
 											isAdmin
 												? `
                     <div style="margin: 10px 0; border-top: 1px solid #eee;"></div>
+					
                     <div class="nav-item ${
 											activeTab === 'employees' ? 'active' : ''
 										}" onclick="window.router('employees')">
                         <i class="fas fa-user-shield"></i> Сотрудники
+                    </div>
+					<div class="nav-item ${
+						activeTab === 'logs' ? 'active' : ''
+							}" onclick="window.router('logs')">
+                        <i class="fas fa-list-alt"></i> Логи событий
                     </div>
                     `
 												: ''
@@ -228,15 +283,22 @@ function renderLayout(content: string, activeTab: string) {
 window.handleLogin = async () => {
 	const l = (document.getElementById('loginInput') as HTMLInputElement).value
 	const p = (document.getElementById('passwordInput') as HTMLInputElement).value
+
 	const res = await api.login(l, p)
+
 	if (res && res.user) {
 		currentUser = res.user
+
+		localStorage.setItem('userData', JSON.stringify(currentUser))
+
 		window.router('dashboard')
 	}
 }
 
 window.logout = () => {
 	currentUser = null
+	localStorage.removeItem('authToken')
+	localStorage.removeItem('userData') 
 	renderLogin()
 }
 
@@ -335,6 +397,17 @@ window.router = async (route: string) => {
                     <table><thead><tr><th>Имя</th><th>Логин</th><th>Должность</th><th>Роль</th></tr></thead><tbody>${rows}</tbody></table>
                 </div>
             `
+		}
+	} else if (route === 'logs') {
+		// Проверка безопасности: если не админ, не пускаем
+		if (currentUser!.role !== 'admin') {
+			html = `<div class="card">Доступ запрещен</div>`
+		} else {
+			// 1. Запрашиваем логи с сервера (функцию getLogs мы добавили в ApiService ранее)
+			const logs = await api.getLogs()
+
+			// 2. Генерируем HTML с помощью функции, которую напишем ниже
+			html = renderLogsPage(logs)
 		}
 	}
 	contentBox.innerHTML = html
@@ -512,6 +585,112 @@ window.showSchedule = async (id: number) => {
 	)!.innerHTML = `<div class="card"><h3>График</h3><button class="btn btn-secondary" onclick="window.router('loans')">Назад</button><table><thead><tr><th>Дата</th><th>Сумма</th><th>Остаток</th><th>Статус</th></tr></thead><tbody>${rows}</tbody></table></div>`
 }
 
+function renderLogsPage(logs: any[]) {
+	// Пробегаемся по каждому логу и делаем строку таблицы <tr>
+	const rows = logs
+		.map(l => {
+			// Превращаем JSON-детали в читаемый текст
+			// Например: {amount: 100} -> "amount: 100"
+			let detailsStr = ''
+			if (l.details) {
+				detailsStr = Object.entries(l.details)
+					.map(
+						([k, v]) =>
+							`<span style="background:#eee; padding:2px 4px; border-radius:4px; font-size:0.8em; margin-right: 4px;">${k}: ${v}</span>`
+					)
+					.join('')
+			}
+
+			// Красим бейджики в зависимости от действия
+			let badgeColor = '#f0f0f0' // Серый по умолчанию
+			if (l.action === 'ISSUE_LOAN') badgeColor = '#e3f2fd' // Голубой
+			if (l.action === 'CREATE_CLIENT') badgeColor = '#fff3e0' // Оранжевый
+			if (l.action === 'REGISTER_EMPLOYEE') badgeColor = '#e8f5e9' // Зеленый
+
+			return `
+            <tr>
+                <td style="font-size:0.85em; color:#666;">${new Date(
+									l.date
+								).toLocaleString()}</td>
+                <td><b>${l.user}</b></td>
+                <td><span style="background:${badgeColor}; padding: 4px 8px; border-radius:12px; font-size:0.85em; font-weight:500">${
+				l.action
+			}</span></td>
+                <td>${l.entity} #${l.entityId}</td>
+                <td>${detailsStr}</td>
+            </tr>
+        `
+		})
+		.join('')
+
+	// Возвращаем полный HTML страницы
+	return `
+        <div class="card">
+            <h3>Журнал действий (Аудит)</h3>
+            
+            <!-- Панель фильтров -->
+            <div style="background: #fafafa; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end;">
+                
+                <div class="form-group" style="margin-bottom:0; flex:1">
+                    <label>Тип события</label>
+                    <select id="filterAction">
+                        <option value="">Все события</option>
+                        <option value="ISSUE_LOAN">Выдача кредита</option>
+                        <option value="CREATE_CLIENT">Создание клиента</option>
+                        <option value="REGISTER_EMPLOYEE">Регистрация сотрудника</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" style="margin-bottom:0; flex:1">
+                    <label>Дата (с какого числа)</label>
+                    <input type="date" id="filterDate">
+                </div>
+                
+                <button class="btn btn-primary" onclick="window.applyLogFilters()">Применить фильтр</button>
+            </div>
+
+            <!-- Таблица -->
+            <table>
+                <thead>
+                    <tr>
+                        <th>Время</th>
+                        <th>Кто выполнил</th>
+                        <th>Действие</th>
+                        <th>Объект</th>
+                        <th>Детали</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${
+											rows.length > 0
+												? rows
+												: '<tr><td colspan="5" style="text-align:center; padding:20px; color:#888">Записей не найдено</td></tr>'
+										}
+                </tbody>
+            </table>
+        </div>
+    `
+}
+
+// Функция, которая вызывается при нажатии кнопки "Применить фильтр"
+window.applyLogFilters = async () => {
+	// 1. Берем значения из полей ввода
+	const action = (document.getElementById('filterAction') as HTMLInputElement)
+		.value
+	const date = (document.getElementById('filterDate') as HTMLInputElement).value
+
+	// 2. Формируем объект фильтров
+	const filters: any = {}
+	if (action) filters.action = action
+	if (date) filters.from = date
+
+	// 3. Запрашиваем отфильтрованные данные с сервера
+	const logs = await api.getLogs(filters)
+
+	// 4. Перерисовываем страницу с новыми данными
+	document.getElementById('page-content')!.innerHTML = renderLogsPage(logs)
+}
+
 function getPageTitle(t: string) {
 	const m: any = {
 		dashboard: 'Обзор',
@@ -522,5 +701,26 @@ function getPageTitle(t: string) {
 	return m[t] || ''
 }
 
+function initApp() {
+	const savedToken = localStorage.getItem('authToken')
+	const savedUser = localStorage.getItem('userData')
+
+	if (savedToken && savedUser) {
+		// Если данные есть в памяти, восстанавливаем их
+		try {
+			currentUser = JSON.parse(savedUser)
+			// Восстанавливаем последнюю открытую вкладку (по желанию) или идем на главную
+			window.router('dashboard')
+		} catch (e) {
+			// Если данные повреждены — выходим
+			window.logout()
+		}
+	} else {
+		// Если данных нет — показываем вход
+		renderLogin()
+	}
+}
+
 // Init
 renderLogin()
+initApp()

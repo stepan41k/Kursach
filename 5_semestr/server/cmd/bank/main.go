@@ -10,11 +10,21 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stepan41k/Kursach/5_semestr/pkg/auth"
 )
 
 // --- 1. STRUCТS (JSON DTOs) ---
+
+type RegisterRequest struct {
+	Login     string `json:"login"`
+	Password  string `json:"password"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Position  string `json:"position"`
+}
 
 type LoginRequest struct {
 	Login    string `json:"login"`
@@ -119,6 +129,75 @@ func initDB() {
 
 // --- 3. HANDLERS ---
 
+func registerHandler(c *gin.Context) {
+	var req RegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	
+	// Начинаем транзакцию
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Tx failed"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Находим ID роли 'manager' (или создаем, если нет)
+	var roleID int
+	// Пытаемся найти роль manager
+	err = tx.QueryRow(ctx, "SELECT id FROM roles WHERE name = 'manager'").Scan(&roleID)
+	if err != nil {
+		// Если роли нет, ошибка (в реальности она должна быть в init.sql)
+		c.JSON(500, gin.H{"error": "Role 'manager' not found in DB. Please run init sql."})
+		return
+	}
+
+	// 2. Создаем User
+	var userID int64
+	// is_active = true
+	err = tx.QueryRow(ctx, `
+		INSERT INTO users (role_id, login, password_hash, is_active)
+		VALUES ($1, $2, $3, true)
+		RETURNING id
+	`, roleID, req.Login, req.Password).Scan(&userID)
+
+	if err != nil {
+		c.JSON(409, gin.H{"error": "Login already exists"})
+		return
+	}
+
+	// 3. Создаем Employee
+	_, err = tx.Exec(ctx, `
+		INSERT INTO employees (user_id, first_name, last_name, position)
+		VALUES ($1, $2, $3, $4)
+	`, userID, req.FirstName, req.LastName, req.Position)
+
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create employee profile"})
+		return
+	}
+
+	adminID, _ := c.Get("userId") // Получаем ID админа из middleware
+	
+	logAction(ctx, tx, adminID.(int64), "REGISTER_EMPLOYEE", "employees", userID, map[string]string{
+		"login": req.Login,
+		"role": "manager",
+		"name": fmt.Sprintf("%s %s", req.FirstName, req.LastName),
+	})
+
+	// Подтверждаем транзакцию
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "Commit failed"})
+		return
+	}
+
+	c.JSON(201, gin.H{"message": "Employee registered successfully"})
+}
+
 func loginHandler(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -128,7 +207,6 @@ func loginHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	
-	// SQL: Join users -> roles -> employees
 	query := `
 		SELECT u.id, u.password_hash, r.name, e.first_name, e.last_name
 		FROM users u
@@ -139,21 +217,34 @@ func loginHandler(c *gin.Context) {
 
 	var userID int64
 	var pwdHash, roleName string
-	var fName, lName *string // Use pointers for nullable columns
+	var fName, lName *string
 
 	err := db.QueryRow(ctx, query, req.Login).Scan(&userID, &pwdHash, &roleName, &fName, &lName)
-	if err == pgx.ErrNoRows {
+	if err != nil {
 		c.JSON(401, gin.H{"error": "User not found"})
-		return
-	} else if err != nil {
-		c.JSON(500, gin.H{"error": "Database error"})
-		log.Println(err)
 		return
 	}
 
-	// В продакшене: bcrypt.CompareHashAndPassword
+	// В продакшене тут нужен bcrypt!
 	if req.Password != pwdHash {
 		c.JSON(401, gin.H{"error": "Invalid password"})
+		return
+	}
+
+	// ГЕНЕРАЦИЯ JWT
+	expirationTime := time.Now().Add(24 * time.Hour) // Токен валиден 24 часа
+	claims := &auth.Claims{
+		UserID: userID,
+		Role:   roleName,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(auth.JWTKey)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Could not generate token"})
 		return
 	}
 
@@ -163,7 +254,7 @@ func loginHandler(c *gin.Context) {
 	}
 
 	resp := LoginResponse{
-		Token: "demo-token-123",
+		Token: tokenString, // <-- Реальный токен
 		User: struct {
 			ID       int64  `json:"id"`
 			Role     string `json:"role"`
@@ -220,18 +311,29 @@ func createClient(c *gin.Context) {
 		RETURNING id, created_at
 	`
 	
-	err = db.QueryRow(c.Request.Context(), query, 
-		cl.FirstName, cl.LastName, cl.MiddleName, 
-		cl.PassportSeries, cl.PassportNumber, cl.PassportIssued, 
-		dob, cl.Address, cl.Phone, cl.Email,
-	).Scan(&cl.ID, &cl.CreatedAt)
-
+	ctx := c.Request.Context()
+	tx, err := db.Begin(ctx) // Начинаем транзакцию
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to create client (possibly duplicate passport)"})
-		log.Println(err)
+		c.JSON(500, gin.H{"error": "Tx failed"})
 		return
 	}
+	defer tx.Rollback(ctx)
 
+    // ... ваш SQL INSERT ...
+    // Замените db.QueryRow на tx.QueryRow
+    err = tx.QueryRow(ctx, query, cl.FirstName, cl.LastName, cl.MiddleName, 
+		cl.PassportSeries, cl.PassportNumber, cl.PassportIssued, 
+		dob, cl.Address, cl.Phone, cl.Email,).Scan(&cl.ID, &cl.CreatedAt)
+    if err != nil { /* обработка ошибки */ return }
+
+	// ЛОГИРОВАНИЕ
+	operatorID, _ := c.Get("userId")
+	logAction(ctx, tx, operatorID.(int64), "CREATE_CLIENT", "clients", cl.ID, map[string]string{
+		"passport": fmt.Sprintf("%s %s", cl.PassportSeries, cl.PassportNumber),
+		"name": fmt.Sprintf("%s %s", cl.LastName, cl.FirstName),
+	})
+
+	tx.Commit(ctx) // Не забудьте!
 	c.JSON(201, cl)
 }
 
@@ -359,6 +461,13 @@ func issueLoan(c *gin.Context) {
 	}
 
 	// 4. COMMIT
+
+	logAction(ctx, tx, req.EmployeeID, "ISSUE_LOAN", "loan_contracts", contractID, map[string]string{
+		"amount": fmt.Sprintf("%.2f", req.Amount),
+		"term": fmt.Sprintf("%d", req.TermMonths),
+		"contract": contractNumber,
+	})
+
 	if err := tx.Commit(ctx); err != nil {
 		c.JSON(500, gin.H{"error": "Commit failed"})
 		return
@@ -450,6 +559,84 @@ func getEmployeesHandler(c *gin.Context) {
 	c.JSON(200, employees)
 }
 
+func getLogsHandler(c *gin.Context) {
+	// Фильтры
+	action := c.Query("action")
+	fromDate := c.Query("from") // YYYY-MM-DD
+	
+	// Строим запрос динамически
+	sqlQuery := `
+		SELECT a.id, a.action_type, a.entity_name, a.entity_id, a.created_at, a.new_values,
+		       u.login, e.first_name, e.last_name
+		FROM audit_logs a
+		LEFT JOIN users u ON a.user_id = u.id
+		LEFT JOIN employees e ON u.id = e.user_id
+		WHERE 1=1
+	`
+	args := []interface{}{}
+	argCounter := 1
+
+	if action != "" {
+		sqlQuery += fmt.Sprintf(" AND a.action_type = $%d", argCounter)
+		args = append(args, action)
+		argCounter++
+	}
+	if fromDate != "" {
+		sqlQuery += fmt.Sprintf(" AND a.created_at >= $%d", argCounter)
+		args = append(args, fromDate)
+		argCounter++
+	}
+
+	sqlQuery += " ORDER BY a.created_at DESC LIMIT 50"
+
+	rows, err := db.Query(c.Request.Context(), sqlQuery, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var logs []gin.H
+	for rows.Next() {
+		var id, entID int64
+		var act, ent, login string
+		var details map[string]interface{} // PGX сам распарсит JSONB
+		var ts time.Time
+		var fn, ln *string
+
+		err := rows.Scan(&id, &act, &ent, &entID, &ts, &details, &login, &fn, &ln)
+		if err != nil {
+			continue
+		}
+
+		userName := login
+		if fn != nil && ln != nil {
+			userName = fmt.Sprintf("%s %s (%s)", *ln, *fn, login)
+		}
+
+		logs = append(logs, gin.H{
+			"id": id, "action": act, "entity": ent, "entityId": entID,
+			"date": ts, "details": details, "user": userName,
+		})
+	}
+	
+	if logs == nil {
+		logs = []gin.H{}
+	}
+	c.JSON(200, logs)
+}
+
+func logAction(ctx context.Context, tx pgx.Tx, userID int64, action string, entity string, entityID int64, details map[string]string) {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO audit_logs (user_id, action_type, entity_name, entity_id, new_values, created_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+	`, userID, action, entity, entityID, details)
+	
+	if err != nil {
+		log.Printf("AUDIT ERROR: failed to log action %s: %v", action, err)
+	}
+}
+
 func main() {
 	initDB()
 	// Закрываем пул при выходе (хотя в веб-сервере это редко нужно)
@@ -457,21 +644,32 @@ func main() {
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowHeaders: []string{"Content-Type"},
-	}))
+			AllowOrigins:     []string{"http://localhost:3010"}, // Разрешаем всем (или укажите "http://localhost:3010")
+			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+			ExposeHeaders:    []string{"Content-Length"},
+			AllowCredentials: true,
+			MaxAge:           12 * time.Hour,
+		}))
 
 	api := r.Group("/api")
 	{
 		api.POST("/login", loginHandler)
-		api.GET("/clients", getClients)
-		api.POST("/clients", createClient)
-		api.GET("/products", getProducts)
-		api.POST("/loans", issueLoan)
-		api.GET("/loans", getLoans)
-		api.GET("/loans/:id/schedule", getSchedule)
-		api.GET("/employees", getEmployeesHandler)
+		
+		protected := api.Group("/")
+		protected.Use(auth.AuthMiddleware())
+		{
+			protected.POST("/register", registerHandler)
+			protected.GET("/clients", getClients)
+			protected.POST("/clients", createClient)
+			protected.GET("/products", getProducts)
+			protected.POST("/loans", issueLoan)
+			protected.GET("/loans", getLoans)
+			protected.GET("/loans/:id/schedule", getSchedule)
+			protected.GET("/employees", getEmployeesHandler)
+			protected.GET("/logs", getLogsHandler)
+		}
+		
 	}
 
 	r.Run(":8080")

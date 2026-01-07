@@ -6,7 +6,7 @@ RUN npm install -g typescript
 
 COPY app.ts index.html styles.css ./
 
-RUN tsc app.ts --target es6 --lib "es6,dom" --outFile app.js
+RUN tsc app.ts --target es6 --lib "es2017,dom" --outFile app.js
 
 FROM nginx:alpine
 

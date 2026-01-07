@@ -18,7 +18,7 @@ services:
   migrate:
     image: migrate/migrate
     volumes:
-      - ../server/migrations:/migrations 
+      - ../server/migrations:/migrations:z
     command:
       - -path=/migrations #/migrations/
       - -database=postgres://user:password@db:5432/mydb?sslmode=disable
