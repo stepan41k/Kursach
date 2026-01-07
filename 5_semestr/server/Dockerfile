@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine
+FROM golang:1.24.9-alpine AS builder
 
 WORKDIR /src
 
@@ -13,7 +13,7 @@ FROM alpine:latest
 
 WORKDIR /app
 
-COPY --from=0 /src/bank .
+COPY --from=builder /src/bank .
 
 EXPOSE 3030
 
