@@ -13,6 +13,8 @@ FROM alpine:latest
 
 WORKDIR /app
 
+RUN apk add --no-cache postgresql-client
+
 COPY --from=builder /src/bank .
 
 EXPOSE 3030
