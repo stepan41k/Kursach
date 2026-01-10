@@ -1,4 +1,4 @@
-CREATE TYPE user_role_type AS ENUM ('admin', 'manager', 'operator', 'security');
+CREATE TYPE user_role_type AS ENUM ('admin', 'manager', 'client');
 CREATE TYPE contract_status AS ENUM ('draft', 'active', 'closed', 'defaulted');
 CREATE TYPE operation_type AS ENUM ('issue', 'scheduled_payment', 'early_repayment', 'penalty');
 
@@ -11,8 +11,7 @@ CREATE TABLE roles (
 INSERT INTO roles (name, description) VALUES 
 ('admin', 'Полный доступ к системе'),
 ('manager', 'Управление продуктами и одобрение кредитов'),
-('operator', 'Работа с клиентами и платежами'),
-('security', 'Просмотр логов и аудита');
+('client', 'Клиент банка');
 
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
@@ -36,6 +35,7 @@ CREATE TABLE employees (
 
 CREATE TABLE clients (
     id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id),
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
     middle_name VARCHAR(100),
@@ -67,6 +67,7 @@ CREATE TABLE loan_contracts (
     client_id BIGINT NOT NULL REFERENCES clients(id),
     product_id INT NOT NULL REFERENCES credit_products(id),
     approved_by_employee_id BIGINT REFERENCES employees(id),
+    balance NUMERIC(15, 2) NOT NULL,
     amount NUMERIC(15, 2) NOT NULL,
     interest_rate NUMERIC(5, 2) NOT NULL,
     term_months INT NOT NULL,
