@@ -1,6 +1,8 @@
 // --- 1. CONFIG ---
 const API_URL = 'http://localhost:3020/api'
 
+declare var pdfMake: any
+
 interface Window {
 	handleLogin: () => Promise<void>
 	router: (route: string) => void
@@ -21,6 +23,14 @@ interface Window {
 	submitNewEmployee: () => Promise<void>
 
 	applyLogFilters: () => void
+
+	doBackup: () => void
+
+	payInstallment: (
+		scheduleId: number,
+		amount: number,
+		contractId: number
+	) => void
 }
 
 // --- 2. INTERFACES ---
@@ -120,7 +130,6 @@ class ApiService {
 	}
 
 	async login(l: string, p: string) {
-		// Логин — это особый запрос, он идет без токена
 		try {
 			const res = await fetch(`${API_URL}/login`, {
 				method: 'POST',
@@ -139,12 +148,27 @@ class ApiService {
 
 			return data
 		} catch (e) {
-			alert('Неверный логин или пароль')
 			return null
 		}
 	}
 
-	// Все остальные методы используют обертку this.request и автоматически шлют токен
+	async getLoanById(id: number) {
+		// Так как у нас нет отдельного эндпоинта /loans/:id,
+		// мы возьмем список и найдем там нужный.
+		// В реальном проде нужен отдельный метод GET /loans/:id
+		const loans = await this.getLoans()
+		return loans.find((l: any) => l.id === id)
+	}
+	// В класс ApiService
+	async makePayment(scheduleId: number) {
+		return this.request('/pay', 'POST', { scheduleId })
+	}
+	async createBackup() {
+		return this.request('/backup', 'POST', {})
+	}
+	async getMyLoans() {
+		return this.request('/my-loans') || []
+	}
 	async register(d: any) {
 		return this.request('/register', 'POST', d)
 	}
@@ -167,6 +191,7 @@ class ApiService {
 		return this.request('/loans') || []
 	}
 	async issueLoan(d: any) {
+		// Возвращаем полный ответ сервера, чтобы достать contractId
 		return this.request('/loans', 'POST', d)
 	}
 	async getSchedule(id: number) {
@@ -201,11 +226,21 @@ function renderLogin() {
 	app.innerHTML = `
         <div class="login-wrapper">
             <div class="card login-card">
-                <div class="brand" style="justify-content: center;"><i class="fas fa-university"></i> RoseBank</div>
-                <h2>Вход в систему</h2>
-                <div class="form-group"><input type="text" id="loginInput" placeholder="Логин"></div>
-                <div class="form-group"><input type="password" id="passwordInput" placeholder="Пароль"></div>
+                <div class="brand" style="justify-content: center;">
+                    <i class="fas fa-university"></i> RoseBank
+                </div>
+                <h2>Вход в АИС</h2>
+                
+                <div class="form-group">
+                    <input type="text" id="loginInput" placeholder="Логин">
+                </div>
+                <div class="form-group">
+                    <input type="password" id="passwordInput" placeholder="Пароль">
+                </div>
+                <div id="loginError" style="color: #e74c3c; font-size: 0.9rem; margin-bottom: 15px; min-height: 20px; font-weight: 500;"></div>
+
                 <button class="btn btn-primary" style="width: 100%" onclick="window.handleLogin()">Войти</button>
+                
                 <p style="margin-top: 20px; font-size: 0.8rem; color: #888;">Доступ только для сотрудников банка</p>
             </div>
         </div>`
@@ -214,19 +249,25 @@ function renderLogin() {
 function renderLayout(content: string, activeTab: string) {
 	if (!currentUser) return renderLogin()
 
-	// Проверка прав администратора
 	const isAdmin = currentUser.role === 'admin'
+	const isClient = currentUser.role === 'client' // <-- Проверка на клиента
 
 	app.innerHTML = `
         <div class="app-container">
             <div class="sidebar">
                 <div class="brand"><i class="fas fa-spa"></i> RoseBank</div>
                 <nav>
+                    <!-- ОБЩЕЕ: Главная -->
                     <div class="nav-item ${
 											activeTab === 'dashboard' ? 'active' : ''
 										}" onclick="window.router('dashboard')">
                         <i class="fas fa-home"></i> Главная
                     </div>
+
+                    <!-- ДЛЯ СОТРУДНИКОВ (Не клиентов) -->
+                    ${
+											!isClient
+												? `
                     <div class="nav-item ${
 											activeTab === 'clients' ? 'active' : ''
 										}" onclick="window.router('clients')">
@@ -237,21 +278,41 @@ function renderLayout(content: string, activeTab: string) {
 										}" onclick="window.router('loans')">
                         <i class="fas fa-file-invoice-dollar"></i> Кредиты
                     </div>
+                    `
+												: ''
+										}
                     
+                    <!-- ДЛЯ КЛИЕНТОВ -->
+                    ${
+											isClient
+												? `
+                    <div class="nav-item ${
+											activeTab === 'my-loans' ? 'active' : ''
+										}" onclick="window.router('my-loans')">
+                        <i class="fas fa-wallet"></i> Мои кредиты
+                    </div>
+                    `
+												: ''
+										}
+
+                    <!-- ДЛЯ АДМИНА -->
                     ${
 											isAdmin
 												? `
                     <div style="margin: 10px 0; border-top: 1px solid #eee;"></div>
-					
                     <div class="nav-item ${
 											activeTab === 'employees' ? 'active' : ''
 										}" onclick="window.router('employees')">
                         <i class="fas fa-user-shield"></i> Сотрудники
                     </div>
-					<div class="nav-item ${
-						activeTab === 'logs' ? 'active' : ''
-							}" onclick="window.router('logs')">
+                    <div class="nav-item ${
+											activeTab === 'logs' ? 'active' : ''
+										}" onclick="window.router('logs')">
                         <i class="fas fa-list-alt"></i> Логи событий
+                    </div>
+                    <!-- КНОПКА БЭКАПА -->
+                    <div class="nav-item" onclick="window.doBackup()" style="color: var(--accent-rose)">
+                        <i class="fas fa-database"></i> Бэкап БД
                     </div>
                     `
 												: ''
@@ -265,12 +326,12 @@ function renderLayout(content: string, activeTab: string) {
                 <div class="header">
                     <h2>${getPageTitle(activeTab)}</h2>
                     <div class="user-profile">
-                        <span>${currentUser.name} (${currentUser.role})</span>
-                        <div class="avatar" style="background: ${
-													isAdmin ? 'var(--accent-rose)' : 'var(--primary-pink)'
-												}; color: #fff;">
-                            ${currentUser.name[0]}
-                        </div>
+                        <span>${currentUser.name || 'Пользователь'} (${
+		currentUser.role
+	})</span>
+                        <div class="avatar">${
+													(currentUser.name || 'U')[0]
+												}</div>
                     </div>
                 </div>
                 <div id="page-content">${content}</div>
@@ -281,24 +342,48 @@ function renderLayout(content: string, activeTab: string) {
 // --- 6. HANDLERS ---
 
 window.handleLogin = async () => {
+	const loginInput = document.getElementById('loginInput') as HTMLInputElement
+	const passInput = document.getElementById('passwordInput') as HTMLInputElement
+	const errorBox = document.getElementById('loginError') as HTMLElement
+
 	const l = (document.getElementById('loginInput') as HTMLInputElement).value
 	const p = (document.getElementById('passwordInput') as HTMLInputElement).value
+
+	loginInput.style.border = '1px solid #eee'
+	passInput.style.border = '1px solid #eee'
+	errorBox.innerText = ''
+
+	let errorMsg = ''
+
+	if (!l) {
+		loginInput.style.border = '1px solid #e74c3c' // Красная рамка
+		errorMsg = 'Введите логин'
+	} else if (!p) {
+		passInput.style.border = '1px solid #e74c3c' // Красная рамка
+		errorMsg = 'Введите пароль'
+	}
+
+	if (errorMsg) {
+		errorBox.innerText = errorMsg
+		return
+	}
 
 	const res = await api.login(l, p)
 
 	if (res && res.user) {
 		currentUser = res.user
-
 		localStorage.setItem('userData', JSON.stringify(currentUser))
-
 		window.router('dashboard')
+	} else {
+		passInput.style.border = '1px solid #e74c3c'
+		errorBox.innerText = 'Неверный логин или пароль'
 	}
 }
 
 window.logout = () => {
 	currentUser = null
 	localStorage.removeItem('authToken')
-	localStorage.removeItem('userData') 
+	localStorage.removeItem('userData')
 	renderLogin()
 }
 
@@ -409,7 +494,32 @@ window.router = async (route: string) => {
 			// 2. Генерируем HTML с помощью функции, которую напишем ниже
 			html = renderLogsPage(logs)
 		}
+	} else if (route === 'my-loans') {
+		const loans = await api.getMyLoans()
+		if (loans.length > 0) {
+			const rows = loans
+				.map(
+					(l: any) => `
+                <tr>
+                    <td>${l.contractNumber}</td>
+                    <td>${l.productName}</td>
+                    <td>${l.amount.toLocaleString()} ₽</td>
+                    <td>${new Date(l.startDate).toLocaleDateString()}</td>
+                    <td><span class="status-badge status-active">${
+											l.status
+										}</span></td>
+                    <td><button class="btn btn-secondary" onclick="window.showSchedule(${
+											l.id
+										})">График</button></td>
+                </tr>`
+				)
+				.join('')
+			html = `<div class="card"><h3>Мои текущие кредиты</h3><table><thead><tr><th>Номер</th><th>Продукт</th><th>Сумма</th><th>Дата</th><th>Статус</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table></div>`
+		} else {
+			html = `<div class="card"><h3>У вас пока нет активных кредитов</h3></div>`
+		}
 	}
+
 	contentBox.innerHTML = html
 }
 
@@ -419,14 +529,37 @@ window.showAddEmployeeForm = () => {
 	document.getElementById('page-content')!.innerHTML = `
         <div class="card" style="max-width: 500px; margin: 0 auto;">
             <h3>Новый сотрудник</h3>
-            <div class="form-group"><label>Логин для входа</label><input id="newEmpLogin"></div>
-            <div class="form-group"><label>Пароль</label><input type="password" id="newEmpPass"></div>
-            <div class="form-group"><label>Имя</label><input id="newEmpName"></div>
-            <div class="form-group"><label>Фамилия</label><input id="newEmpSurname"></div>
-            <div class="form-group"><label>Должность</label><input id="newEmpPos" value="Менеджер"></div>
+            
             <div class="form-group">
-                <small style="color:#666">Роль по умолчанию: <b>manager</b>. Созданный сотрудник сможет выдавать кредиты.</small>
+                <label>Логин *</label>
+                <input id="newEmpLogin">
+                <small id="err-elogin" class="error-message"></small>
             </div>
+            <div class="form-group">
+                <label>Пароль *</label>
+                <input type="password" id="newEmpPass">
+                <small id="err-epass" class="error-message"></small>
+            </div>
+            
+            <div class="form-group">
+                <label>Имя *</label>
+                <input id="newEmpName">
+                <small id="err-ename" class="error-message"></small>
+            </div>
+            <div class="form-group">
+                <label>Фамилия *</label>
+                <input id="newEmpSurname">
+                <small id="err-esurname" class="error-message"></small>
+            </div>
+            
+            <div class="form-group">
+                <label>Email *</label>
+                <input type="email" id="newEmpEmail">
+                <small id="err-eemail" class="error-message"></small>
+            </div>
+            
+            <div class="form-group"><label>Должность</label><input id="newEmpPos" value="Менеджер"></div>
+            
             <button class="btn btn-primary" onclick="window.submitNewEmployee()">Создать</button>
             <button class="btn btn-secondary" onclick="window.router('employees')">Отмена</button>
         </div>
@@ -434,6 +567,41 @@ window.showAddEmployeeForm = () => {
 }
 
 window.submitNewEmployee = async () => {
+	let isValid = true
+	isValid =
+		validateField(
+			'newEmpLogin',
+			REGEX.MIN_4,
+			'err-elogin',
+			'Минимум 4 символа'
+		) && isValid
+	isValid =
+		validateField(
+			'newEmpPass',
+			REGEX.MIN_6,
+			'err-epass',
+			'Минимум 6 символов'
+		) && isValid
+	isValid =
+		validateField('newEmpName', REGEX.MIN_2, 'err-ename', 'Заполните поле') &&
+		isValid
+	isValid =
+		validateField(
+			'newEmpSurname',
+			REGEX.MIN_2,
+			'err-esurname',
+			'Заполните поле'
+		) && isValid
+	isValid =
+		validateField(
+			'newEmpEmail',
+			v => REGEX.EMAIL.test(v),
+			'err-eemail',
+			'Некорректный Email'
+		) && isValid
+
+	if (!isValid) return
+
 	const data = {
 		login: (document.getElementById('newEmpLogin') as HTMLInputElement).value,
 		password: (document.getElementById('newEmpPass') as HTMLInputElement).value,
@@ -442,15 +610,11 @@ window.submitNewEmployee = async () => {
 		lastName: (document.getElementById('newEmpSurname') as HTMLInputElement)
 			.value,
 		position: (document.getElementById('newEmpPos') as HTMLInputElement).value,
-	}
-
-	if (!data.login || !data.password) {
-		alert('Логин и пароль обязательны')
-		return
+		email: (document.getElementById('newEmpEmail') as HTMLInputElement).value,
 	}
 
 	if (await api.createEmployee(data)) {
-		alert('Сотрудник успешно создан!')
+		alert('Сотрудник создан!')
 		window.router('employees')
 	}
 }
@@ -461,24 +625,114 @@ window.showAddClientForm = () => {
 	document.getElementById('page-content')!.innerHTML = `
         <div class="card" style="max-width: 800px;">
             <h3>Новый клиент</h3>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div class="form-group"><label>Фамилия</label><input id="ln"></div>
-                <div class="form-group"><label>Имя</label><input id="fn"></div>
-                <div class="form-group"><label>Отчество</label><input id="mn"></div>
-                <div class="form-group"><label>Телефон</label><input id="ph"></div>
-                <div class="form-group"><label>Серия пасп.</label><input id="ps"></div>
-                <div class="form-group"><label>Номер пасп.</label><input id="pn"></div>
-                <div class="form-group"><label>Дата рождения</label><input type="date" id="dob"></div>
-                <div class="form-group"><label>Кем выдан</label><input id="pi"></div>
+            <div class="alert-info" style="background:#e3f2fd; padding:10px; border-radius:8px; margin-bottom:20px; font-size:0.9em; color:#0d47a1;">
+                <i class="fas fa-info-circle"></i> Логин и пароль будут отправлены на Email.
             </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="form-group">
+                    <label>Фамилия *</label>
+                    <input id="ln">
+                    <small id="err-ln" class="error-message"></small>
+                </div>
+                <div class="form-group">
+                    <label>Имя *</label>
+                    <input id="fn">
+                    <small id="err-fn" class="error-message"></small>
+                </div>
+                <div class="form-group">
+                    <label>Отчество</label>
+                    <input id="mn">
+                    <small class="error-message"></small> <!-- Пустое, для отступа -->
+                </div>
+                <div class="form-group">
+                    <label>Телефон</label>
+                    <input id="ph">
+                    <small id="err-ph" class="error-message"></small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Серия пасп. (4 цифры) *</label>
+                    <input id="ps" maxlength="4">
+                    <small id="err-ps" class="error-message"></small>
+                </div>
+                <div class="form-group">
+                    <label>Номер пасп. (6 цифр) *</label>
+                    <input id="pn" maxlength="6">
+                    <small id="err-pn" class="error-message"></small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Дата рождения *</label>
+                    <input type="date" id="dob">
+                    <small id="err-dob" class="error-message"></small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" id="clEmail" placeholder="mail@example.com">
+                    <small id="err-email" class="error-message"></small>
+                </div>
+            </div>
+            
+            <div class="form-group"><label>Кем выдан</label><input id="pi"></div>
             <div class="form-group"><label>Адрес</label><input id="addr"></div>
-            <button class="btn btn-primary" onclick="window.submitNewClient()">Сохранить</button>
+            
+            <button class="btn btn-primary" onclick="window.submitNewClient()">Зарегистрировать</button>
             <button class="btn btn-secondary" onclick="window.router('clients')">Отмена</button>
         </div>`
 }
 
 window.submitNewClient = async () => {
+	// ВАЛИДАЦИЯ
+	let isValid = true
+
+	// Проверяем каждое поле и обновляем флаг isValid (используем &= чтобы проверить ВСЕ поля сразу)
+	// Важно: порядок вызова важен, чтобы подсветить все ошибки сразу
+	isValid =
+		validateField('ln', REGEX.MIN_2, 'err-ln', 'Минимум 2 буквы') && isValid
+	isValid =
+		validateField('fn', REGEX.MIN_2, 'err-fn', 'Минимум 2 буквы') && isValid
+	isValid =
+		validateField(
+			'ps',
+			v => REGEX.PASSPORT_SERIES.test(v),
+			'err-ps',
+			'Ровно 4 цифры'
+		) && isValid
+	isValid =
+		validateField(
+			'pn',
+			v => REGEX.PASSPORT_NUMBER.test(v),
+			'err-pn',
+			'Ровно 6 цифр'
+		) && isValid
+	isValid =
+		validateField(
+			'clEmail',
+			v => REGEX.EMAIL.test(v),
+			'err-email',
+			'Некорректный Email'
+		) && isValid
+	isValid =
+		validateField('dob', REGEX.NOT_EMPTY, 'err-dob', 'Выберите дату') && isValid
+	// Телефон опционален, но если введен - проверим
+	const phVal = (document.getElementById('ph') as HTMLInputElement).value
+	if (phVal) {
+		isValid =
+			validateField(
+				'ph',
+				v => REGEX.PHONE.test(v),
+				'err-ph',
+				'Неверный формат'
+			) && isValid
+	}
+
+	if (!isValid) return // Если есть ошибки, не отправляем
+
+	// Сбор данных (как раньше)
 	const data = {
+		email: (document.getElementById('clEmail') as HTMLInputElement).value,
 		firstName: (document.getElementById('fn') as HTMLInputElement).value,
 		lastName: (document.getElementById('ln') as HTMLInputElement).value,
 		middleName: (document.getElementById('mn') as HTMLInputElement).value,
@@ -489,8 +743,9 @@ window.submitNewClient = async () => {
 		dateOfBirth: (document.getElementById('dob') as HTMLInputElement).value,
 		address: (document.getElementById('addr') as HTMLInputElement).value,
 	}
+
 	if (await api.createClient(data)) {
-		alert('Клиент создан')
+		alert('Клиент успешно зарегистрирован!')
 		window.router('clients')
 	}
 }
@@ -548,7 +803,7 @@ window.issueLoan = async () => {
 		alert('Ошибка авторизации')
 		return
 	}
-	
+
 	const data = {
 		clientId: currentLoanClientId,
 		productId: Number(
@@ -562,27 +817,90 @@ window.issueLoan = async () => {
 		),
 		employeeId: currentUser.id,
 	}
-	if (await api.issueLoan(data)) {
-		alert('Кредит выдан!')
+
+	// Получаем ответ с ID контракта
+	const response = await api.issueLoan(data)
+
+	if (response && response.contractId) {
+		// 1. Сообщаем об успехе
+		// Используем confirm, чтобы спросить о печати
+		const printNow = confirm(
+			'Кредит успешно оформлен! Распечатать договор и график платежей?'
+		)
+
+		if (printNow) {
+			await generateContractPDF(response.contractId)
+		}
+
 		window.router('loans')
 	}
 }
 
 window.showSchedule = async (id: number) => {
 	const s = await api.getSchedule(id)
+	const isClient = currentUser && currentUser.role === 'client'
+
 	const rows = s
-		.map(
-			(r: any) =>
-				`<tr><td>${new Date(r.paymentDate).toLocaleDateString()}</td><td>${
-					r.paymentAmount
-				}</td><td>${r.remainingBalance}</td><td>${
-					r.isPaid ? 'Да' : 'Нет'
-				}</td></tr>`
-		)
+		.map((r: any) => {
+			// Логика отображения статуса / кнопки
+			let actionCell = ''
+
+			if (r.isPaid) {
+				actionCell = `<span class="status-badge" style="background:#e8f5e9; color:#2e7d32">Оплачено</span>`
+			} else {
+				if (isClient) {
+					// Если это клиент и не оплачено -> кнопка
+					actionCell = `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.8rem;" onclick="window.payInstallment(${r.id}, ${r.paymentAmount}, ${id})">Оплатить</button>`
+				} else {
+					// Если это менеджер -> просто текст
+					actionCell = `<span class="status-badge" style="background:#ffebee; color:#c62828">Не оплачено</span>`
+				}
+			}
+
+			return `
+            <tr>
+                <td>${new Date(r.paymentDate).toLocaleDateString()}</td>
+                <td><b>${r.paymentAmount.toFixed(2)} ₽</b></td>
+                <td style="color:#666">${r.principal.toFixed(2)}</td>
+                <td style="color:#666">${r.interest.toFixed(2)}</td>
+                <td>${r.remainingBalance.toFixed(2)}</td>
+                <td>${actionCell}</td>
+            </tr>
+        `
+		})
 		.join('')
-	document.getElementById(
-		'page-content'
-	)!.innerHTML = `<div class="card"><h3>График</h3><button class="btn btn-secondary" onclick="window.router('loans')">Назад</button><table><thead><tr><th>Дата</th><th>Сумма</th><th>Остаток</th><th>Статус</th></tr></thead><tbody>${rows}</tbody></table></div>`
+
+	// Определяем, куда возвращаться (в "Мои кредиты" или в общий список)
+	const backRoute = isClient ? 'my-loans' : 'loans'
+
+	document.getElementById('page-content')!.innerHTML = `
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3>График платежей</h3>
+                <div>
+                    ${
+											!isClient
+												? `<button class="btn btn-primary" onclick="generateContractPDF(${id})"><i class="fas fa-print"></i> Печать</button>`
+												: ''
+										}
+                    <button class="btn btn-secondary" onclick="window.router('${backRoute}')">Назад</button>
+                </div>
+            </div>
+            <br>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Сумма платежа</th>
+                        <th>Осн. долг</th>
+                        <th>Проценты</th>
+                        <th>Остаток</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`
 }
 
 function renderLogsPage(logs: any[]) {
@@ -718,6 +1036,205 @@ function initApp() {
 	} else {
 		// Если данных нет — показываем вход
 		renderLogin()
+	}
+}
+
+// --- PDF GENERATOR ---
+
+async function generateContractPDF(contractId: number) {
+	// 1. Собираем данные
+	const contract = await api.getLoanById(contractId)
+	if (!contract) return
+
+	const schedule = await api.getSchedule(contractId)
+
+	// Текущая дата для шапки
+	const today = new Date().toLocaleDateString('ru-RU')
+
+	// 2. Формируем таблицу графика для PDF
+	const tableBody = [
+		[
+			{ text: '№', style: 'tableHeader' },
+			{ text: 'Дата', style: 'tableHeader' },
+			{ text: 'Платеж', style: 'tableHeader' },
+			{ text: 'Осн. долг', style: 'tableHeader' },
+			{ text: 'Проценты', style: 'tableHeader' },
+			{ text: 'Остаток', style: 'tableHeader' },
+		],
+	]
+
+	schedule.forEach((row: any, index: number) => {
+		tableBody.push([
+			(index + 1).toString(),
+			new Date(row.paymentDate).toLocaleDateString(),
+			row.paymentAmount.toFixed(2),
+			row.principal.toFixed(2),
+			row.interest.toFixed(2),
+			row.remainingBalance.toFixed(2),
+		])
+	})
+
+	// 3. Описание документа (DD) для pdfmake
+	const docDefinition = {
+		info: {
+			title: `Договор №${contract.contractNumber}`,
+			author: 'RoseBank AIS',
+		},
+		content: [
+			// Шапка
+			{ text: 'ПАО «ROSEBANK»', style: 'brand', alignment: 'right' },
+			{
+				text: `КРЕДИТНЫЙ ДОГОВОР № ${contract.contractNumber}`,
+				style: 'header',
+				margin: [0, 20, 0, 10],
+			},
+
+			// Место и дата
+			{
+				columns: [
+					{ text: 'г. Москва', width: '*' },
+					{ text: today, width: 'auto' },
+				],
+				margin: [0, 0, 0, 20],
+			},
+
+			// Тело договора
+			{ text: '1. ПРЕДМЕТ ДОГОВОРА', style: 'subheader' },
+			{
+				text: [
+					'Банк обязуется предоставить Заемщику (',
+					{ text: contract.clientName, bold: true },
+					') денежные средства (Кредит) в размере ',
+					{ text: `${contract.amount.toLocaleString()} руб.`, bold: true },
+					' на срок ',
+					{ text: `${contract.termMonths} мес.`, bold: true },
+					' под ',
+					{ text: `${contract.interestRate}%`, bold: true },
+					' годовых.',
+				],
+				margin: [0, 5, 0, 10],
+				alignment: 'justify',
+			},
+			{
+				text: `Цель кредитования: ${contract.productName}`,
+				margin: [0, 0, 0, 20],
+			},
+
+			// График
+			{ text: '2. ГРАФИК ПЛАТЕЖЕЙ', style: 'subheader' },
+			{
+				style: 'tableExample',
+				table: {
+					headerRows: 1,
+					widths: ['auto', '*', 'auto', 'auto', 'auto', 'auto'],
+					body: tableBody,
+				},
+				layout: 'lightHorizontalLines',
+			},
+
+			// Подписи
+			{
+				text: '3. АДРЕСА И РЕКВИЗИТЫ СТОРОН',
+				style: 'subheader',
+				margin: [0, 30, 0, 10],
+			},
+			{
+				columns: [
+					{
+						width: '*',
+						text: [
+							{ text: 'БАНК:\n', bold: true },
+							'ПАО «RoseBank»\n',
+							'Адрес: г. Москва, ул. Роз, 1\n',
+							'БИК: 044525000\n\n',
+							'Менеджер: ___________________',
+						],
+					},
+					{
+						width: '*',
+						text: [
+							{ text: 'ЗАЕМЩИК:\n', bold: true },
+							`${contract.clientName}\n`,
+							'Паспорт: РФ\n\n\n',
+							'Подпись: ___________________',
+						],
+					},
+				],
+			},
+		],
+		styles: {
+			brand: { fontSize: 10, color: '#C06C84', bold: true },
+			header: { fontSize: 16, bold: true, alignment: 'center' },
+			subheader: { fontSize: 12, bold: true, margin: [0, 10, 0, 5] },
+			tableHeader: { bold: true, fontSize: 10, color: 'black' },
+			tableExample: { margin: [0, 5, 0, 15], fontSize: 9 },
+		},
+	}
+
+	// Генерируем и открываем в новом окне
+	pdfMake.createPdf(docDefinition).open()
+}
+
+window.doBackup = async () => {
+	if (!confirm('Создать полную резервную копию базы данных?')) return
+
+	const res = await api.createBackup()
+	if (res && res.message) {
+		alert(`Успешно! Файл: ${res.file}`)
+	}
+}
+
+function validateField(
+	id: string,
+	rule: (val: string) => boolean,
+	errorId: string,
+	errorText: string
+): boolean {
+	const input = document.getElementById(id) as HTMLInputElement
+	const errorBox = document.getElementById(errorId) as HTMLElement
+
+	if (!input || !errorBox) return false
+
+	const isValid = rule(input.value.trim())
+
+	if (!isValid) {
+		input.classList.add('input-error')
+		errorBox.innerText = errorText
+		return false
+	} else {
+		input.classList.remove('input-error')
+		errorBox.innerText = ''
+		return true
+	}
+}
+
+// Регулярки
+const REGEX = {
+	EMAIL: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+	PASSPORT_SERIES: /^\d{4}$/, // 4 цифры
+	PASSPORT_NUMBER: /^\d{6}$/, // 6 цифр
+	PHONE: /^[+]?[\d\s()-]{10,}$/, // Телефон (простой вариант)
+	MIN_2: (val: string) => val.length >= 2,
+	MIN_4: (val: string) => val.length >= 4,
+	MIN_6: (val: string) => val.length >= 6,
+	NOT_EMPTY: (val: string) => val.length > 0,
+}
+
+window.payInstallment = async (
+	scheduleId: number,
+	amount: number,
+	contractId: number
+) => {
+	if (!confirm(`Выполнить списание средств в размере ${amount.toFixed(2)} ₽?`))
+		return
+
+	// В реальном приложении здесь был бы ввод карты, но у нас эмуляция
+	const res = await api.makePayment(scheduleId)
+
+	if (res && res.message) {
+		alert('Платеж успешно выполнен!')
+		// Обновляем график, чтобы увидеть статус "Оплачено"
+		window.showSchedule(contractId)
 	}
 }
 
