@@ -9,7 +9,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/stepan41k/Kursach/5_semestr/pkg/backup"
+	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/backup"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/handler"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/auth"
 )

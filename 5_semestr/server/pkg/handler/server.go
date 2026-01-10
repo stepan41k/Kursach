@@ -12,7 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/stepan41k/Kursach/5_semestr/pkg/backup"
+	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/backup"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/auth"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/mail"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/password"
