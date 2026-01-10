@@ -214,3 +214,17 @@ td {
     padding: 40px;
     border: 1px solid #ccc;
 }
+
+.input-error {
+    border-color: #e74c3c !important; /* Красная рамка */
+    background-color: #fdf0ef;
+}
+
+/* Текст ошибки под полем */
+.error-message {
+    color: #e74c3c;
+    font-size: 0.8rem;
+    margin-top: 4px;
+    display: block;
+    min-height: 18px; /* Чтобы форма не прыгала */
+}
