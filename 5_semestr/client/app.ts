@@ -2,6 +2,7 @@
 const API_URL = 'http://localhost:3020/api'
 
 declare var pdfMake: any
+declare var Chart: any;
 
 interface Window {
 	handleLogin: () => Promise<void>
@@ -21,6 +22,8 @@ interface Window {
 	// Сотрудники (Админка)
 	showAddEmployeeForm: () => void
 	submitNewEmployee: () => Promise<void>
+
+	doEarlyRepayment: (contractId: number, balance: number) => void
 
 	applyLogFilters: () => void
 
@@ -163,6 +166,9 @@ class ApiService {
 	async makePayment(scheduleId: number) {
 		return this.request('/pay', 'POST', { scheduleId })
 	}
+	async getLoanOperations(contractId: number) {
+		return this.request(`/loans/${contractId}/operations`) || []
+	}
 	async createBackup() {
 		return this.request('/backup', 'POST', {})
 	}
@@ -189,6 +195,13 @@ class ApiService {
 	}
 	async getLoans() {
 		return this.request('/loans') || []
+	}
+	async getStats() {
+		return this.request('/stats') || {}
+	}
+	// В класс ApiService
+	async repayEarly(contractId: number) {
+		return this.request('/repay-early', 'POST', { contractId })
 	}
 	async issueLoan(d: any) {
 		// Возвращаем полный ответ сервера, чтобы достать contractId
@@ -251,6 +264,7 @@ function renderLayout(content: string, activeTab: string) {
 
 	const isAdmin = currentUser.role === 'admin'
 	const isClient = currentUser.role === 'client' // <-- Проверка на клиента
+    const isStaff = currentUser.role === 'admin' || currentUser.role === 'manager';
 
 	app.innerHTML = `
         <div class="app-container">
@@ -294,6 +308,17 @@ function renderLayout(content: string, activeTab: string) {
                     `
 												: ''
 										}
+					${
+						isStaff
+							? `
+					<div class="nav-item ${
+							activeTab === 'stats' ? 'active' : ''
+						}" onclick="window.router('stats')">
+						<i class="fas fa-chart-pie"></i> Статистика
+					</div>
+					`
+							: ''
+					}
 
                     <!-- ДЛЯ АДМИНА -->
                     ${
@@ -397,8 +422,14 @@ window.router = async (route: string) => {
 	if (route === 'dashboard') {
 		html = `
         <div class="card">
-            <h3>Добро пожаловать, ${currentUser!.name}!</h3>
-            <p>Вы вошли как: <b>${currentUser!.role}</b></p>
+            <!-- Добавили margin-bottom -->
+            <h3 style="margin-bottom: 15px;">Добро пожаловать, ${
+							currentUser!.name
+						}!</h3>
+            
+            <p style="margin-bottom: 8px;">Вы вошли как: <b>${
+							currentUser!.role
+						}</b></p>
             <p>Используйте меню слева для навигации.</p>
         </div>`
 	} else if (route === 'clients') {
@@ -424,9 +455,13 @@ window.router = async (route: string) => {
                     <table><thead><tr><th>ФИО</th><th>Паспорт</th><th>Телефон</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table>
                 </div>`
 		} else {
-			html = `<div class="card" style="text-align:center; padding:40px;">
-                <h3>Клиентов пока нет</h3>
-                <button class="btn btn-primary" onclick="window.showAddClientForm()">+ Создать клиента</button>
+			// ИЗМЕНЕНИЕ: margin-bottom: 25px у заголовка
+			html = `
+            <div class="card" style="text-align:center; padding: 60px 40px;">
+                <h3 style="margin-bottom: 25px; color: #333;">Клиентов пока нет</h3>
+                <button class="btn btn-primary" onclick="window.showAddClientForm()" style="padding: 12px 24px; font-size: 1rem;">
+                    + Создать клиента
+                </button>
             </div>`
 		}
 	} else if (route === 'loans') {
@@ -451,7 +486,12 @@ window.router = async (route: string) => {
 				.join('')
 			html = `<div class="card"><h3>Активные кредиты</h3><table><thead><tr><th>Номер</th><th>Клиент</th><th>Продукт</th><th>Сумма</th><th>Статус</th><th>Инфо</th></tr></thead><tbody>${rows}</tbody></table></div>`
 		} else {
-			html = `<div class="card"><h3>Кредитов нет</h3><p>Перейдите в раздел "Клиенты", чтобы выдать кредит.</p></div>`
+			// ИЗМЕНЕНИЕ: margin-bottom: 15px
+			html = `
+             <div class="card" style="text-align:center; padding: 60px 40px;">
+                <h3 style="margin-bottom: 15px;">Кредитов нет</h3>
+                <p style="color: #666;">Перейдите в раздел "Клиенты", чтобы выдать кредит.</p>
+             </div>`
 		}
 	} else if (route === 'employees') {
 		// Доступ только для админа
@@ -516,9 +556,27 @@ window.router = async (route: string) => {
 				.join('')
 			html = `<div class="card"><h3>Мои текущие кредиты</h3><table><thead><tr><th>Номер</th><th>Продукт</th><th>Сумма</th><th>Дата</th><th>Статус</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table></div>`
 		} else {
-			html = `<div class="card"><h3>У вас пока нет активных кредитов</h3></div>`
+			html = `
+            <div class="card" style="text-align:center; padding: 60px 40px;">
+                <h3>У вас пока нет активных кредитов</h3>
+            </div>`
+		}
+	} // Внутри window.router
+	else if (route === 'stats') {
+		// Проверка прав
+		if (currentUser!.role === 'client') {
+			html = `<div class="card">Доступ запрещен</div>`
+		} else {
+			// 1. Грузим данные
+			const stats = await api.getStats()
+			// 2. Рисуем HTML-каркас
+			html = renderStatsPage(stats)
+			// 3. (Важно!) Рисуем график с небольшой задержкой, чтобы HTML успел вставиться в DOM
+			setTimeout(() => initStatsChart(stats.distribution), 100)
 		}
 	}
+
+	contentBox.innerHTML = html
 
 	contentBox.innerHTML = html
 }
@@ -623,13 +681,15 @@ window.submitNewEmployee = async () => {
 
 window.showAddClientForm = () => {
 	document.getElementById('page-content')!.innerHTML = `
-        <div class="card" style="max-width: 800px;">
-            <h3>Новый клиент</h3>
-            <div class="alert-info" style="background:#e3f2fd; padding:10px; border-radius:8px; margin-bottom:20px; font-size:0.9em; color:#0d47a1;">
-                <i class="fas fa-info-circle"></i> Логин и пароль будут отправлены на Email.
+        <div class="card" style="max-width: 800px; padding: 30px;">
+            <h3 style="margin-bottom: 20px;">Новый клиент</h3>
+            
+            <div class="alert-info" style="background:#e3f2fd; padding: 10px 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.9em; color:#0d47a1; border-left: 4px solid #2196f3;">
+                <i class="fas fa-info-circle" style="margin-right: 8px;"></i> Логин и пароль будут отправлены на Email.
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <!-- ИЗМЕНЕНИЕ ЗДЕСЬ: gap уменьшен до 10px -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                 <div class="form-group">
                     <label>Фамилия *</label>
                     <input id="ln">
@@ -643,7 +703,7 @@ window.showAddClientForm = () => {
                 <div class="form-group">
                     <label>Отчество</label>
                     <input id="mn">
-                    <small class="error-message"></small> <!-- Пустое, для отступа -->
+                    <small class="error-message"></small>
                 </div>
                 <div class="form-group">
                     <label>Телефон</label>
@@ -669,17 +729,25 @@ window.showAddClientForm = () => {
                 </div>
                 
                 <div class="form-group">
-                    <label>Email *</label>
+                    <label>Email (обязательно) *</label>
                     <input type="email" id="clEmail" placeholder="mail@example.com">
                     <small id="err-email" class="error-message"></small>
                 </div>
             </div>
             
-            <div class="form-group"><label>Кем выдан</label><input id="pi"></div>
-            <div class="form-group"><label>Адрес</label><input id="addr"></div>
+            <div class="form-group" style="margin-bottom: 15px;">
+                <label>Кем выдан</label>
+                <input id="pi">
+            </div>
+            <div class="form-group" style="margin-bottom: 25px;">
+                <label>Адрес</label>
+                <input id="addr">
+            </div>
             
-            <button class="btn btn-primary" onclick="window.submitNewClient()">Зарегистрировать</button>
-            <button class="btn btn-secondary" onclick="window.router('clients')">Отмена</button>
+            <div style="margin-top: 20px; display: flex; gap: 15px;">
+                <button class="btn btn-primary" onclick="window.submitNewClient()" style="padding: 10px 20px;">Зарегистрировать</button>
+                <button class="btn btn-secondary" onclick="window.router('clients')" style="padding: 10px 20px;">Отмена</button>
+            </div>
         </div>`
 }
 
@@ -766,14 +834,41 @@ window.openNewLoanModal = async (clientId: number) => {
 
 	document.getElementById('page-content')!.innerHTML = `
         <div class="card" style="max-width: 600px;">
-            <h3>Выдача кредита</h3>
-            <div class="form-group"><label>Продукт</label><select id="loanProduct" onchange="window.previewSchedule()">${options}</select></div>
-            <div class="form-group"><label>Сумма</label><input type="number" id="loanAmount" value="100000"></div>
-            <div class="form-group"><label>Срок (мес)</label><input type="number" id="loanTerm" value="12"></div>
-            <div id="previewBox" style="background:#f9f9f9; padding:15px; margin:15px 0; border-radius:8px">Расчет...</div>
-            <button class="btn btn-primary" onclick="window.issueLoan()">Оформить</button>
-            <button class="btn btn-secondary" onclick="window.router('clients')">Отмена</button>
+            <h3 style="margin-bottom: 25px;">Выдача кредита</h3>
+            
+            <div style="display: flex; flex-direction: column; gap: 20px;"> <!-- Увеличили gap до 20px -->
+                
+                <div class="form-group">
+                    <label style="margin-bottom: 8px; display: block; font-weight: 500;">Продукт</label>
+                    <select id="loanProduct" onchange="window.previewSchedule()" style="padding: 12px;">${options}</select>
+                    <div id="productLimits" style="margin-top: 12px; font-size: 0.9rem; color: #555; background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid var(--accent-rose); line-height: 1.6;">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label style="margin-bottom: 8px; display: block; font-weight: 500;">Сумма (₽)</label>
+                    <input type="number" id="loanAmount" value="100000" oninput="window.previewSchedule()" style="padding: 12px;">
+                    <small id="amountError" style="color: #e74c3c; font-size: 0.85rem; margin-top: 5px; display: block;"></small>
+                </div>
+                
+                <div class="form-group">
+                    <label style="margin-bottom: 8px; display: block; font-weight: 500;">Срок (мес)</label>
+                    <input type="number" id="loanTerm" value="12" oninput="window.previewSchedule()" style="padding: 12px;">
+                    <small id="termError" style="color: #e74c3c; font-size: 0.85rem; margin-top: 5px; display: block;"></small>
+                </div>
+                
+                <div id="previewBox" style="background:#fff0f3; border: 1px solid var(--primary-pink); padding: 20px; border-radius: 12px; line-height: 1.8;">
+                    Расчет...
+                </div>
+                
+                <div style="margin-top: 15px; display: flex; gap: 15px;">
+                    <button class="btn btn-primary" onclick="window.issueLoan()" style="padding: 12px 24px; font-size: 1rem;">Оформить</button>
+                    <button class="btn btn-secondary" onclick="window.router('clients')" style="padding: 12px 24px; font-size: 1rem;">Отмена</button>
+                </div>
+
+            </div>
         </div>`
+
 	window.previewSchedule()
 }
 
@@ -781,19 +876,88 @@ window.previewSchedule = () => {
 	const prodId = Number(
 		(document.getElementById('loanProduct') as HTMLInputElement).value
 	)
-	const amount = Number(
-		(document.getElementById('loanAmount') as HTMLInputElement).value
-	)
-	const term = Number(
-		(document.getElementById('loanTerm') as HTMLInputElement).value
-	)
-	const prod = loadedProducts.find(p => p.id === prodId)
+	const amountInput = document.getElementById('loanAmount') as HTMLInputElement
+	const termInput = document.getElementById('loanTerm') as HTMLInputElement
 
-	if (prod) {
+	// Получаем числа (защита от пустоты || 0)
+	const amount = Number(amountInput.value) || 0
+	const term = Number(termInput.value) || 0
+
+	const prod = loadedProducts.find(p => p.id === prodId)
+	const previewBox = document.getElementById('previewBox')
+	const limitsBox = document.getElementById('productLimits')
+
+	const amountErr = document.getElementById('amountError')
+	const termErr = document.getElementById('termError')
+
+	if (prod && previewBox && limitsBox) {
+		// 1. ВЫВОДИМ ИНФОРМАЦИЮ О ПРОДУКТЕ
+		limitsBox.innerHTML = `
+            <!-- Добавили margin-bottom: 8px -->
+            <div style="margin-bottom: 8px;">
+                <i class="fas fa-coins"></i> 
+                Сумма: <b>${formatMoney(prod.minAmount)}</b> — <b>${formatMoney(
+			prod.maxAmount
+		)} ₽</b>
+            </div>
+            
+            <div>
+                <i class="fas fa-calendar-alt"></i> 
+                Срок: &nbsp;&nbsp;<b>${prod.minTerm}</b> — <b>${
+			prod.maxTerm
+		} мес.</b>
+            </div>
+        `
+
+		// 2. ВАЛИДАЦИЯ (Проверка границ)
+		let isValid = true
+
+		// Проверка суммы
+		if (amount < prod.minAmount || amount > prod.maxAmount) {
+			amountInput.style.borderColor = '#e74c3c'
+			amountErr!.innerText = `Выход за лимиты (от ${prod.minAmount.toLocaleString()})`
+			isValid = false
+		} else {
+			amountInput.style.borderColor = '#eee'
+			amountErr!.innerText = ''
+		}
+
+		// Проверка срока
+		if (term < prod.minTerm || term > prod.maxTerm) {
+			termInput.style.borderColor = '#e74c3c'
+			termErr!.innerText = `Срок от ${prod.minTerm} до ${prod.maxTerm} мес.`
+			isValid = false
+		} else {
+			termInput.style.borderColor = '#eee'
+			termErr!.innerText = ''
+		}
+
+		// 3. РАСЧЕТ ИЛИ ОШИБКА
+		if (!isValid) {
+			previewBox.innerHTML =
+				'<span style="color:#e74c3c"><i class="fas fa-exclamation-triangle"></i> Параметры не соответствуют условиям продукта</span>'
+			return
+		}
+
+		// Если всё ок - считаем
 		const res = api.calculatePreview(amount, prod.rate, term)
-		document.getElementById('previewBox')!.innerHTML = `
-            <div>Платеж: <b>${res.monthlyPayment.toFixed(2)} ₽/мес</b></div>
-            <div>Переплата: <b>${res.totalInterest.toFixed(2)} ₽</b></div>
+
+		previewBox.innerHTML = `
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Ежемесячный платеж:</span>
+                <b style="color: var(--accent-rose); font-size: 1.1em;">
+                    ${formatMoney(res.monthlyPayment)} ₽
+                </b>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Переплата за весь срок:</span>
+                <b>
+                    ${formatMoney(res.totalInterest)} ₽
+                </b>
+            </div>
+            <div style="margin-top:5px; font-size:0.85em; color:#666; text-align:right;">
+                Ставка: ${prod.rate}%
+            </div>
         `
 	}
 }
@@ -837,47 +1001,109 @@ window.issueLoan = async () => {
 }
 
 window.showSchedule = async (id: number) => {
-	const s = await api.getSchedule(id)
+	// 1. Загружаем график И историю операций параллельно
+	const [schedule, operations] = await Promise.all([
+		api.getSchedule(id),
+		api.getLoanOperations(id),
+	])
+
+	// 2. Логика определения статуса (как было раньше)
 	const isClient = currentUser && currentUser.role === 'client'
+	let isLoanActive = false
+	let currentBalance = 0
 
-	const rows = s
+	const list = isClient ? await api.getMyLoans() : await api.getLoans()
+	const loan = list.find((l: any) => Number(l.id) === Number(id))
+
+	if (loan) {
+		currentBalance = loan.balance
+		isLoanActive = loan.status === 'active' && loan.balance > 0
+	}
+
+	// 3. Формируем таблицу Графика (как было раньше)
+	let nextPaymentFound = false
+	const scheduleRows = schedule
 		.map((r: any) => {
-			// Логика отображения статуса / кнопки
 			let actionCell = ''
-
 			if (r.isPaid) {
 				actionCell = `<span class="status-badge" style="background:#e8f5e9; color:#2e7d32">Оплачено</span>`
 			} else {
-				if (isClient) {
-					// Если это клиент и не оплачено -> кнопка
-					actionCell = `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.8rem;" onclick="window.payInstallment(${r.id}, ${r.paymentAmount}, ${id})">Оплатить</button>`
+				if (isClient && isLoanActive) {
+					if (!nextPaymentFound) {
+						actionCell = `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.8rem;" onclick="window.payInstallment(${r.id}, ${r.paymentAmount}, ${id})">Оплатить</button>`
+						nextPaymentFound = true
+					} else {
+						actionCell = `<span style="color:#999; font-size:0.85rem;"><i class="fas fa-lock"></i> По очереди</span>`
+					}
 				} else {
-					// Если это менеджер -> просто текст
 					actionCell = `<span class="status-badge" style="background:#ffebee; color:#c62828">Не оплачено</span>`
 				}
+			}
+			return `
+            <tr>
+                <td>${new Date(r.paymentDate).toLocaleDateString()}</td>
+                <td><b>${formatMoney(r.paymentAmount)} ₽</b></td>
+                <td style="color:#666">${formatMoney(r.principal)}</td>
+                <td style="color:#666">${formatMoney(r.interest)}</td>
+                <td>${formatMoney(r.remainingBalance)}</td>
+                <td>${actionCell}</td>
+            </tr>`
+		})
+		.join('')
+
+	// 4. Формируем таблицу ИСТОРИИ ОПЕРАЦИЙ (Новое)
+	const operationsRows = operations
+		.map((op: any) => {
+			let typeName = op.type
+			let icon = '<i class="fas fa-circle" style="font-size:8px"></i>'
+
+			// Красивые названия
+			if (op.type === 'issue') {
+				typeName = 'Выдача кредита'
+				icon = '<i class="fas fa-hand-holding-usd" style="color:green"></i>'
+			}
+			if (op.type === 'scheduled_payment') {
+				typeName = 'Платеж'
+				icon =
+					'<i class="fas fa-check-circle" style="color:var(--accent-rose)"></i>'
+			}
+			if (op.type === 'early_repayment') {
+				typeName = 'Досрочное погашение'
+				icon = '<i class="fas fa-star" style="color:gold"></i>'
 			}
 
 			return `
             <tr>
-                <td>${new Date(r.paymentDate).toLocaleDateString()}</td>
-                <td><b>${r.paymentAmount.toFixed(2)} ₽</b></td>
-                <td style="color:#666">${r.principal.toFixed(2)}</td>
-                <td style="color:#666">${r.interest.toFixed(2)}</td>
-                <td>${r.remainingBalance.toFixed(2)}</td>
-                <td>${actionCell}</td>
+                <td style="width: 150px; color: #666;">${new Date(
+									op.date
+								).toLocaleString()}</td>
+                <td style="width: 50px; text-align:center">${icon}</td>
+                <td>
+                    <div style="font-weight: 500">${typeName}</div>
+                    <div style="font-size: 0.85rem; color: #888;">${
+											op.desc
+										}</div>
+                </td>
+                <td style="text-align: right; font-weight: bold;">${formatMoney(
+									op.amount
+								)} ₽</td>
             </tr>
         `
 		})
 		.join('')
 
-	// Определяем, куда возвращаться (в "Мои кредиты" или в общий список)
 	const backRoute = isClient ? 'my-loans' : 'loans'
+	const earlyRepayBtn =
+		isClient && isLoanActive
+			? `<button class="btn" style="background:var(--accent-rose); color:white; margin-right:10px; border:none;" onclick="window.doEarlyRepayment(${id}, ${currentBalance})"><i class="fas fa-money-check-alt"></i> Полное погашение</button>`
+			: ''
 
 	document.getElementById('page-content')!.innerHTML = `
         <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <h3>График платежей</h3>
                 <div>
+                    ${earlyRepayBtn}
                     ${
 											!isClient
 												? `<button class="btn btn-primary" onclick="generateContractPDF(${id})"><i class="fas fa-print"></i> Печать</button>`
@@ -886,29 +1112,40 @@ window.showSchedule = async (id: number) => {
                     <button class="btn btn-secondary" onclick="window.router('${backRoute}')">Назад</button>
                 </div>
             </div>
+            ${
+							isClient && isLoanActive
+								? `<div style="margin: 10px 0; font-size: 0.9rem; color: #666;">Текущий долг: <b>${formatMoney(
+										currentBalance
+								  )} ₽</b></div>`
+								: ''
+						}
             <br>
             <table>
-                <thead>
-                    <tr>
-                        <th>Дата</th>
-                        <th>Сумма платежа</th>
-                        <th>Осн. долг</th>
-                        <th>Проценты</th>
-                        <th>Остаток</th>
-                        <th>Статус</th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
+                <thead><tr><th>Дата</th><th>Сумма</th><th>Осн. долг</th><th>Проценты</th><th>Остаток</th><th>Статус</th></tr></thead>
+                <tbody>${scheduleRows}</tbody>
             </table>
-        </div>`
+        </div>
+
+        <!-- БЛОК ИСТОРИИ ОПЕРАЦИЙ -->
+        <div class="card" style="margin-top: 20px;">
+            <h3>История операций</h3>
+            <table style="margin-top: 15px;">
+                <tbody>
+                    ${
+											operationsRows.length
+												? operationsRows
+												: '<tr><td colspan="4" style="text-align:center; padding: 20px; color: #999">История пуста</td></tr>'
+										}
+                </tbody>
+            </table>
+        </div>
+    `
 }
 
 function renderLogsPage(logs: any[]) {
-	// Пробегаемся по каждому логу и делаем строку таблицы <tr>
 	const rows = logs
 		.map(l => {
-			// Превращаем JSON-детали в читаемый текст
-			// Например: {amount: 100} -> "amount: 100"
+			// Форматируем детали
 			let detailsStr = ''
 			if (l.details) {
 				detailsStr = Object.entries(l.details)
@@ -919,11 +1156,12 @@ function renderLogsPage(logs: any[]) {
 					.join('')
 			}
 
-			// Красим бейджики в зависимости от действия
-			let badgeColor = '#f0f0f0' // Серый по умолчанию
+			// Цвета для бейджиков
+			let badgeColor = '#f0f0f0'
 			if (l.action === 'ISSUE_LOAN') badgeColor = '#e3f2fd' // Голубой
-			if (l.action === 'CREATE_CLIENT') badgeColor = '#fff3e0' // Оранжевый
-			if (l.action === 'REGISTER_EMPLOYEE') badgeColor = '#e8f5e9' // Зеленый
+			if (l.action === 'PAYMENT') badgeColor = '#e8f5e9' // Зеленый
+			if (l.action === 'EARLY_REPAYMENT') badgeColor = '#fff3e0' // Оранжевый
+			if (l.action === 'CREATE_CLIENT') badgeColor = '#f3e5f5' // Фиолетовый
 
 			return `
             <tr>
@@ -941,34 +1179,35 @@ function renderLogsPage(logs: any[]) {
 		})
 		.join('')
 
-	// Возвращаем полный HTML страницы
 	return `
         <div class="card">
             <h3>Журнал действий (Аудит)</h3>
             
-            <!-- Панель фильтров -->
-            <div style="background: #fafafa; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end;">
+            <!-- ИЗМЕНЕНИЕ: padding: 20px, gap: 30px -->
+            <div style="background: #fafafa; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 30px; align-items: flex-end;">
                 
                 <div class="form-group" style="margin-bottom:0; flex:1">
-                    <label>Тип события</label>
-                    <select id="filterAction">
+                    <label style="margin-bottom: 8px; display:block;">Тип события</label>
+                    <select id="filterAction" style="width: 100%;">
                         <option value="">Все события</option>
                         <option value="ISSUE_LOAN">Выдача кредита</option>
+                        <option value="EARLY_REPAYMENT">Досрочное погашение</option>
+                        <option value="PAYMENT">Платеж по графику</option>
                         <option value="CREATE_CLIENT">Создание клиента</option>
                         <option value="REGISTER_EMPLOYEE">Регистрация сотрудника</option>
                     </select>
                 </div>
                 
                 <div class="form-group" style="margin-bottom:0; flex:1">
-                    <label>Дата (с какого числа)</label>
-                    <input type="date" id="filterDate">
+                    <label style="margin-bottom: 8px; display:block;">Дата (с какого числа)</label>
+                    <input type="date" id="filterDate" style="width: 100%;">
                 </div>
                 
-                <button class="btn btn-primary" onclick="window.applyLogFilters()">Применить фильтр</button>
+                <button class="btn btn-primary" onclick="window.applyLogFilters()" style="height: 42px;">Применить фильтр</button>
             </div>
 
-            <!-- Таблица -->
             <table>
+                <!-- ... заголовок таблицы ... -->
                 <thead>
                     <tr>
                         <th>Время</th>
@@ -982,7 +1221,7 @@ function renderLogsPage(logs: any[]) {
                     ${
 											rows.length > 0
 												? rows
-												: '<tr><td colspan="5" style="text-align:center; padding:20px; color:#888">Записей не найдено</td></tr>'
+												: '<tr><td colspan="5" style="text-align:center; padding:30px; color:#888">Записей не найдено</td></tr>'
 										}
                 </tbody>
             </table>
@@ -990,19 +1229,15 @@ function renderLogsPage(logs: any[]) {
     `
 }
 
-// Функция, которая вызывается при нажатии кнопки "Применить фильтр"
 window.applyLogFilters = async () => {
-	// 1. Берем значения из полей ввода
 	const action = (document.getElementById('filterAction') as HTMLInputElement)
 		.value
 	const date = (document.getElementById('filterDate') as HTMLInputElement).value
 
-	// 2. Формируем объект фильтров
 	const filters: any = {}
 	if (action) filters.action = action
 	if (date) filters.from = date
 
-	// 3. Запрашиваем отфильтрованные данные с сервера
 	const logs = await api.getLogs(filters)
 
 	// 4. Перерисовываем страницу с новыми данными
@@ -1236,6 +1471,104 @@ window.payInstallment = async (
 		// Обновляем график, чтобы увидеть статус "Оплачено"
 		window.showSchedule(contractId)
 	}
+}
+
+// Хелпер для форматирования денег
+// Делает: 12345.6 -> "12 345,60"
+function formatMoney(amount: number): string {
+	return amount.toLocaleString('ru-RU', {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+		useGrouping: true, // Включает разделение тысяч пробелами
+	})
+}
+
+window.doEarlyRepayment = async (contractId: number, balance: number) => {
+	// Красивое подтверждение
+	if (
+		!confirm(
+			`Вы действительно хотите выполнить ПОЛНОЕ досрочное погашение?\n\nСумма списания: ${formatMoney(
+				balance
+			)} ₽\n\nКредит будет закрыт, будущие проценты аннулированы.`
+		)
+	) {
+		return
+	}
+
+	const res = await api.repayEarly(contractId)
+
+	if (res && res.message) {
+		alert(`Успешно! Списано: ${formatMoney(res.paidAmount)} ₽. Кредит закрыт.`)
+		// Возвращаемся в список кредитов
+		window.router('my-loans')
+	}
+}
+
+// HTML каркас страницы статистики
+function renderStatsPage(stats: any) {
+    return `
+        <!-- Карточки с цифрами -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+            <div class="card" style="background: linear-gradient(135deg, #fff0f3 0%, #fff 100%); border-left: 5px solid var(--accent-rose);">
+                <h4 style="color: #666; margin-bottom: 10px;">Всего выдано (тело кредитов)</h4>
+                <div style="font-size: 1.8em; font-weight: bold; color: var(--accent-rose);">
+                    ${formatMoney(stats.totalIssued)} ₽
+                </div>
+            </div>
+            
+            <div class="card" style="background: linear-gradient(135deg, #e8f5e9 0%, #fff 100%); border-left: 5px solid #2e7d32;">
+                <h4 style="color: #666; margin-bottom: 10px;">Всего возвращено (платежи)</h4>
+                <div style="font-size: 1.8em; font-weight: bold; color: #2e7d32;">
+                    ${formatMoney(stats.totalRepaid)} ₽
+                </div>
+            </div>
+        </div>
+
+        <!-- Блок с диаграммой -->
+        <div class="card">
+            <h3>Распределение кредитного портфеля</h3>
+            <div style="height: 400px; display: flex; justify-content: center;">
+                <canvas id="productsChart"></canvas>
+            </div>
+        </div>
+    `;
+}
+
+// Функция инициализации Chart.js
+function initStatsChart(data: any[]) {
+    const ctx = document.getElementById('productsChart') as HTMLCanvasElement;
+    if (!ctx) return;
+
+    // Подготовка данных для Chart.js
+    const labels = data.map(d => d.label);
+    const values = data.map(d => d.value);
+    
+    // Палитра цветов (розово-фиолетовая гамма)
+    const colors = [
+        '#C06C84', '#6C5B7B', '#355C7D', '#F67280', '#F8B195', '#A8E6CF'
+    ];
+
+    new Chart(ctx, {
+        type: 'doughnut', // Тип: пончик (или 'pie' для круга)
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Количество кредитов',
+                data: values,
+                backgroundColor: colors,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
 }
 
 // Init

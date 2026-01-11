@@ -447,9 +447,10 @@ func (h *HandlerDriver) IssueLoan(c *gin.Context) {
 }
 
 func (h *HandlerDriver) GetLoans(c *gin.Context) {
-	// JOIN для получения читаемых имен
+	// ИСПРАВЛЕНИЕ: Добавили lc.interest_rate и lc.term_months в запрос
 	query := `
 		SELECT lc.id, lc.contract_number, lc.amount, lc.status, lc.start_date,
+		       lc.interest_rate, lc.term_months, lc.balance, 
 		       c.first_name || ' ' || c.last_name as client_name,
 		       cp.name as product_name
 		FROM loan_contracts lc
@@ -464,12 +465,37 @@ func (h *HandlerDriver) GetLoans(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var loans []models.LoanContract
+	var loans []gin.H
 	for rows.Next() {
-		var l models.LoanContract
-		// contract_status это enum, pgx сканирует его в string нормально
-		rows.Scan(&l.ID, &l.ContractNumber, &l.Amount, &l.Status, &l.StartDate, &l.ClientName, &l.ProductName)
-		loans = append(loans, l)
+		var id int64
+		var contractNum, status, clientName, prodName string
+		var amount, balance, rate float64
+		var startDate time.Time
+		var term int
+
+		// Сканируем новые поля
+		err := rows.Scan(&id, &contractNum, &amount, &status, &startDate, &rate, &term, &balance, &clientName, &prodName)
+		if err != nil {
+			log.Println("Scan error:", err)
+			continue
+		}
+		
+		loans = append(loans, gin.H{
+			"id": id, 
+			"contractNumber": contractNum, 
+			"amount": amount,
+			"balance": balance,
+			"status": status, 
+			"startDate": startDate,
+			"clientName": clientName,
+			"productName": prodName,
+			"interestRate": rate,
+			"termMonths": term,
+		})
+	}
+	
+	if loans == nil {
+		loans = []gin.H{}
 	}
 	c.JSON(200, loans)
 }
@@ -530,14 +556,23 @@ func (h *HandlerDriver) GetEmployeesHandler(c *gin.Context) {
 }
 
 func (h *HandlerDriver) GetLogsHandler(c *gin.Context) {
-	// Фильтры
 	action := c.Query("action")
-	fromDate := c.Query("from") // YYYY-MM-DD
+	fromDate := c.Query("from")
 
-	// Строим запрос динамически
+	// УЛУЧШЕННЫЙ SQL:
+	// COALESCE заменяет NULL на дефолтные значения прямо в базе,
+	// чтобы Go не ругался при сканировании.
 	sqlQuery := `
-		SELECT a.id, a.action_type, a.entity_name, a.entity_id, a.created_at, a.new_values,
-		       u.login, e.first_name, e.last_name
+		SELECT 
+			a.id, 
+			a.action_type, 
+			COALESCE(a.entity_name, 'system'), 
+			COALESCE(a.entity_id, 0), 
+			a.created_at, 
+			COALESCE(a.new_values, '{}'::jsonb),
+			u.login, 
+			e.first_name, 
+			e.last_name
 		FROM audit_logs a
 		LEFT JOIN users u ON a.user_id = u.id
 		LEFT JOIN employees e ON u.id = e.user_id
@@ -569,19 +604,25 @@ func (h *HandlerDriver) GetLogsHandler(c *gin.Context) {
 	var logs []gin.H
 	for rows.Next() {
 		var id, entID int64
-		var act, ent, login string
-		var details map[string]interface{} // PGX сам распарсит JSONB
+		var act, ent string
+		var details map[string]interface{}
 		var ts time.Time
-		var fn, ln *string
+		// login, fn, ln остаются указателями, так как LEFT JOIN может вернуть NULL для всей таблицы юзера
+		var login, fn, ln *string 
 
 		err := rows.Scan(&id, &act, &ent, &entID, &ts, &details, &login, &fn, &ln)
 		if err != nil {
+			// Если ошибка все еще есть, выведем её в лог контейнера
+			log.Printf("Error scanning log row ID %d: %v", id, err)
 			continue
 		}
 
-		userName := login
-		if fn != nil && ln != nil {
-			userName = fmt.Sprintf("%s %s (%s)", *ln, *fn, login)
+		userName := "Система/Неизвестный"
+		if login != nil {
+			userName = *login
+			if fn != nil && ln != nil {
+				userName = fmt.Sprintf("%s %s (%s)", *ln, *fn, *login)
+			}
 		}
 
 		logs = append(logs, gin.H{
@@ -641,6 +682,7 @@ func (h *HandlerDriver) GetMyLoansHandler(c *gin.Context) {
 
 	query := `
 		SELECT lc.id, lc.contract_number, lc.amount, lc.status, lc.start_date,
+		       lc.balance,
 		       cp.name as product_name
 		FROM loan_contracts lc
 		JOIN clients c ON lc.client_id = c.id
@@ -660,13 +702,14 @@ func (h *HandlerDriver) GetMyLoansHandler(c *gin.Context) {
 	for rows.Next() {
 		var id int64
 		var num, status, prodName string
-		var amount float64
+		var amount, balance float64
 		var date time.Time
-		rows.Scan(&id, &num, &amount, &status, &date, &prodName)
+		rows.Scan(&id, &num, &amount, &status, &date, &balance, &prodName)
 
 		loans = append(loans, gin.H{
 			"id": id, "contractNumber": num, "amount": amount,
 			"status": status, "startDate": date, "productName": prodName,
+			"balance": balance,
 		})
 	}
 
@@ -767,4 +810,184 @@ func (h *HandlerDriver) MakePaymentHandler(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Payment successful"})
+}
+
+func (h *HandlerDriver) EarlyRepaymentHandler(c *gin.Context) {
+	var req models.EarlyRepaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Неверный запрос"})
+		return
+	}
+
+	userID, _ := c.Get("userId")
+	ctx := c.Request.Context()
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Tx error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Получаем текущий баланс и проверяем владельца
+	var currentBalance float64
+	var status string
+	var contractNumber string
+
+	err = tx.QueryRow(ctx, `
+		SELECT lc.balance, lc.status, lc.contract_number
+		FROM loan_contracts lc
+		JOIN clients cl ON lc.client_id = cl.id
+		WHERE lc.id = $1 AND cl.user_id = $2
+	`, req.ContractID, userID).Scan(&currentBalance, &status, &contractNumber)
+
+	if err != nil {
+		c.JSON(404, gin.H{"error": "Договор не найден или доступ запрещен"})
+		return
+	}
+
+	if status == "closed" {
+		c.JSON(400, gin.H{"error": "Кредит уже закрыт"})
+		return
+	}
+
+	if currentBalance <= 0 {
+		c.JSON(400, gin.H{"error": "Задолженность отсутствует"})
+		return
+	}
+
+	// 2. Закрываем договор
+	_, err = tx.Exec(ctx, `
+		UPDATE loan_contracts 
+		SET balance = 0, status = 'closed', closed_at = NOW() 
+		WHERE id = $1
+	`, req.ContractID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to close contract"})
+		return
+	}
+
+	// 3. Удаляем будущие неоплаченные платежи из графика
+	// (Так как кредит погашен досрочно, будущие проценты аннулируются)
+	_, err = tx.Exec(ctx, `DELETE FROM repayment_schedule WHERE contract_id = $1 AND is_paid = false`, req.ContractID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to clear schedule"})
+		return
+	}
+
+	// 4. Записываем операцию
+	_, err = tx.Exec(ctx, `
+		INSERT INTO operations (contract_id, operation_type, amount, description, operation_date)
+		VALUES ($1, 'early_repayment', $2, 'Полное досрочное погашение', NOW())
+	`, req.ContractID, currentBalance)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to log operation"})
+		return
+	}
+
+	// 5. Аудит
+	LogAction(ctx, tx, userID.(int64), "EARLY_REPAYMENT", "loan_contracts", req.ContractID, map[string]string{
+		"amount":   fmt.Sprintf("%.2f", currentBalance),
+		"contract": contractNumber,
+	})
+
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "Commit failed"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Кредит успешно погашен досрочно!", "paidAmount": currentBalance})
+}
+
+func (h *HandlerDriver) GetLoanOperationsHandler(c *gin.Context) {
+	contractID := c.Param("id")
+
+	// Простейший запрос
+	query := `
+		SELECT operation_type, amount, operation_date, description
+		FROM operations
+		WHERE contract_id = $1
+		ORDER BY operation_date DESC
+	`
+
+	rows, err := h.db.Query(c.Request.Context(), query, contractID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var ops []gin.H
+	for rows.Next() {
+		var opType, desc string
+		var amount float64
+		var date time.Time
+
+		rows.Scan(&opType, &amount, &date, &desc)
+
+		ops = append(ops, gin.H{
+			"type":   opType,
+			"amount": amount,
+			"date":   date,
+			"desc":   desc,
+		})
+	}
+
+	if ops == nil {
+		ops = []gin.H{}
+	}
+	c.JSON(200, ops)
+}
+
+func (h *HandlerDriver) GetStatsHandler(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var totalIssued float64
+	err := h.db.QueryRow(ctx, "SELECT COALESCE(SUM(amount), 0) FROM loan_contracts WHERE status != 'draft'").Scan(&totalIssued)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Error calculating issued stats"})
+		return
+	}
+
+	var totalRepaid float64
+	err = h.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount), 0) 
+		FROM operations 
+		WHERE operation_type IN ('scheduled_payment', 'early_repayment')
+	`).Scan(&totalRepaid)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Error calculating repaid stats"})
+		return
+	}
+
+	rows, err := h.db.Query(ctx, `
+		SELECT cp.name, COUNT(lc.id)
+		FROM loan_contracts lc
+		JOIN credit_products cp ON lc.product_id = cp.id
+		GROUP BY cp.name
+	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Error calculating pie stats"})
+		return
+	}
+	defer rows.Close()
+
+	type ChartData struct {
+		Label string `json:"label"`
+		Value int    `json:"value"`
+	}
+	var distribution []ChartData
+
+	for rows.Next() {
+		var name string
+		var count int
+		rows.Scan(&name, &count)
+		distribution = append(distribution, ChartData{Label: name, Value: count})
+	}
+
+	c.JSON(200, gin.H{
+		"totalIssued":  totalIssued,
+		"totalRepaid":  totalRepaid,
+		"distribution": distribution,
+	})
 }

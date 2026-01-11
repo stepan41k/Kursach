@@ -82,6 +82,12 @@ func main() {
     		protected.GET("/my-loans", driver.GetMyLoansHandler)
 
 			protected.POST("/pay", driver.MakePaymentHandler)
+
+			protected.POST("/repay-early", driver.EarlyRepaymentHandler)
+
+			protected.GET("/loans/:id/operations", driver.GetLoanOperationsHandler)
+
+			protected.GET("/stats", driver.GetStatsHandler)
 		}
 		
 	}

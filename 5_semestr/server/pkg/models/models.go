@@ -6,6 +6,10 @@ type PaymentRequest struct {
 	ScheduleID int64 `json:"scheduleId" binding:"required"`
 }
 
+type EarlyRepaymentRequest struct {
+	ContractID int64 `json:"contractId" binding:"required"`
+}
+
 type CreateClientRequest struct {
 	FirstName      string `json:"firstName" binding:"required,min=2,max=100"`
 	LastName       string `json:"lastName" binding:"required,min=2,max=100"`

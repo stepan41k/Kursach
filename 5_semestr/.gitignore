@@ -1,2 +1,2 @@
-./deploy/backups/
-./deploy/backups
+.env
+deploy/docker-compose.yml
