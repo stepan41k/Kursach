@@ -1,4 +1,3 @@
-// --- 1. CONFIG ---
 const API_URL = 'http://localhost:3020/api'
 
 declare var pdfMake: any
@@ -9,26 +8,20 @@ interface Window {
 	router: (route: string) => void
 	logout: () => void
 
-	// Клиенты
 	showAddClientForm: () => void
 	submitNewClient: () => Promise<void>
 
-	// Кредиты
 	openNewLoanModal: (clientId: number) => Promise<void>
 	issueLoan: () => Promise<void>
 	previewSchedule: () => void
 	showSchedule: (contractId: number) => Promise<void>
 
-	// Сотрудники (Админка)
 	showAddEmployeeForm: () => void
 	submitNewEmployee: () => Promise<void>
 
 	doEarlyRepayment: (contractId: number, balance: number) => void
-
 	applyLogFilters: () => void
-
 	doBackup: () => void
-
 	payInstallment: (
 		scheduleId: number,
 		amount: number,
@@ -36,7 +29,6 @@ interface Window {
 	) => void
 }
 
-// --- 2. INTERFACES ---
 
 interface User {
 	id: number
@@ -54,7 +46,7 @@ interface Client {
 	dateOfBirth: string
 	address: string
 	phone: string
-	email?: string
+	email: string
 }
 interface Employee {
 	id: number
@@ -87,20 +79,16 @@ interface LoanContract {
 	status: string
 }
 
-// --- 3. API SERVICE ---
 
 class ApiService {
-	// Метод для выполнения запросов с токеном
 	private async request(endpoint: string, method: string = 'GET', body?: any) {
 		try {
-			// 1. Получаем токен из хранилища
 			const token = localStorage.getItem('authToken')
 
 			const headers: HeadersInit = {
 				'Content-Type': 'application/json',
 			}
 
-			// 2. Если токен есть, добавляем заголовок
 			if (token) {
 				headers['Authorization'] = `Bearer ${token}`
 			}
@@ -114,7 +102,6 @@ class ApiService {
 
 			const res = await fetch(`${API_URL}${endpoint}`, opts)
 
-			// 3. Если сервер вернул 401 (Unauthorized), значит токен протух -> разлогиниваем
 			if (res.status === 401) {
 				window.logout()
 				throw new Error('Сессия истекла. Войдите снова.')
@@ -144,7 +131,6 @@ class ApiService {
 
 			const data = await res.json()
 
-			// 4. СОХРАНЯЕМ ТОКЕН
 			if (data.token) {
 				localStorage.setItem('authToken', data.token)
 			}
@@ -156,17 +142,12 @@ class ApiService {
 	}
 
 	async getLoanById(id: number) {
-		// Так как у нас нет отдельного эндпоинта /loans/:id,
-		// мы возьмем список и найдем там нужный.
-		// В реальном проде нужен отдельный метод GET /loans/:id
 		const loans = await this.getLoans()
 		return loans.find((l: any) => l.id === id)
 	}
-	// В класс ApiService
 	async makePayment(scheduleId: number) {
 		return this.request('/pay', 'POST', { scheduleId })
 	}
-	// Внутри класса ApiService
 	async getFinanceReport() {
 		return this.request('/finance-report') || []
 	}
@@ -203,12 +184,10 @@ class ApiService {
 	async getStats() {
 		return this.request('/stats') || {}
 	}
-	// В класс ApiService
 	async repayEarly(contractId: number) {
 		return this.request('/repay-early', 'POST', { contractId })
 	}
 	async issueLoan(d: any) {
-		// Возвращаем полный ответ сервера, чтобы достать contractId
 		return this.request('/loans', 'POST', d)
 	}
 	async getSchedule(id: number) {
@@ -228,18 +207,17 @@ class ApiService {
 	}
 }
 
-// --- 4. APP STATE ---
 
 const api = new ApiService()
 const app = document.getElementById('app')!
 let currentUser: User | null = null
 let loadedProducts: CreditProduct[] = []
 let currentLoanClientId: number | null = null
+let logsInterval: any = null
+let currentLogFilters: any = {}
 
-// --- 5. VIEWS ---
 
 function renderLogin() {
-	// Убрана кнопка регистрации
 	app.innerHTML = `
         <div class="login-wrapper">
             <div class="card login-card">
@@ -257,8 +235,6 @@ function renderLogin() {
                 <div id="loginError" style="color: #e74c3c; font-size: 0.9rem; margin-bottom: 15px; min-height: 20px; font-weight: 500;"></div>
 
                 <button class="btn btn-primary" style="width: 100%" onclick="window.handleLogin()">Войти</button>
-                
-                <p style="margin-top: 20px; font-size: 0.8rem; color: #888;">Доступ только для сотрудников банка</p>
             </div>
         </div>`
 }
@@ -267,7 +243,7 @@ function renderLayout(content: string, activeTab: string) {
 	if (!currentUser) return renderLogin()
 
 	const isAdmin = currentUser.role === 'admin'
-	const isClient = currentUser.role === 'client' // <-- Проверка на клиента
+	const isClient = currentUser.role === 'client'
     const isStaff = currentUser.role === 'admin' || currentUser.role === 'manager';
 
 	app.innerHTML = `
@@ -368,7 +344,6 @@ function renderLayout(content: string, activeTab: string) {
         </div>`
 }
 
-// --- 6. HANDLERS ---
 
 window.handleLogin = async () => {
 	const loginInput = document.getElementById('loginInput') as HTMLInputElement
@@ -385,10 +360,10 @@ window.handleLogin = async () => {
 	let errorMsg = ''
 
 	if (!l) {
-		loginInput.style.border = '1px solid #e74c3c' // Красная рамка
+		loginInput.style.border = '1px solid #e74c3c'
 		errorMsg = 'Введите логин'
 	} else if (!p) {
-		passInput.style.border = '1px solid #e74c3c' // Красная рамка
+		passInput.style.border = '1px solid #e74c3c'
 		errorMsg = 'Введите пароль'
 	}
 
@@ -417,6 +392,11 @@ window.logout = () => {
 }
 
 window.router = async (route: string) => {
+	if (logsInterval) {
+		clearInterval(logsInterval)
+		logsInterval = null
+	}
+	
 	renderLayout('<div class="card">Загрузка данных...</div>', route)
 	const contentBox = document.getElementById('page-content')
 	if (!contentBox) return
@@ -459,7 +439,6 @@ window.router = async (route: string) => {
                     <table><thead><tr><th>ФИО</th><th>Паспорт</th><th>Телефон</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table>
                 </div>`
 		} else {
-			// ИЗМЕНЕНИЕ: margin-bottom: 25px у заголовка
 			html = `
             <div class="card" style="text-align:center; padding: 60px 40px;">
                 <h3 style="margin-bottom: 25px; color: #333;">Клиентов пока нет</h3>
@@ -490,7 +469,6 @@ window.router = async (route: string) => {
 				.join('')
 			html = `<div class="card"><h3>Активные кредиты</h3><table><thead><tr><th>Номер</th><th>Клиент</th><th>Продукт</th><th>Сумма</th><th>Статус</th><th>Инфо</th></tr></thead><tbody>${rows}</tbody></table></div>`
 		} else {
-			// ИЗМЕНЕНИЕ: margin-bottom: 15px
 			html = `
              <div class="card" style="text-align:center; padding: 60px 40px;">
                 <h3 style="margin-bottom: 15px;">Кредитов нет</h3>
@@ -498,7 +476,6 @@ window.router = async (route: string) => {
              </div>`
 		}
 	} else if (route === 'employees') {
-		// Доступ только для админа
 		if (currentUser!.role !== 'admin') {
 			html = `<div class="card">Доступ запрещен</div>`
 		} else {
@@ -528,16 +505,18 @@ window.router = async (route: string) => {
             `
 		}
 	} else if (route === 'logs') {
-		// Проверка безопасности: если не админ, не пускаем
-		if (currentUser!.role !== 'admin') {
-			html = `<div class="card">Доступ запрещен</div>`
-		} else {
-			// 1. Запрашиваем логи с сервера (функцию getLogs мы добавили в ApiService ранее)
-			const logs = await api.getLogs()
+        if (currentUser!.role !== 'admin') {
+            html = `<div class="card">Доступ запрещен</div>`;
+        } else {
+            currentLogFilters = {};
+            
+            const logs = await api.getLogs();
+            html = renderLogsPage(logs);
 
-			// 2. Генерируем HTML с помощью функции, которую напишем ниже
-			html = renderLogsPage(logs)
-		}
+            logsInterval = setInterval(() => {
+                updateLogsTableOnly();
+            }, 5000);
+        }
 	} else if (route === 'my-loans') {
 		const loans = await api.getMyLoans()
 		if (loans.length > 0) {
@@ -576,13 +555,11 @@ window.router = async (route: string) => {
 		if (currentUser!.role === 'client') {
 			html = `<div class="card">Доступ запрещен</div>`
 		} else {
-			// ЗАГРУЖАЕМ ОБА ОТЧЕТА: общую статистику и финансовую таблицу
 			const [stats, financeReport] = await Promise.all([
 				api.getStats(),
 				api.getFinanceReport(),
 			])
 
-			// Передаем оба объекта в функцию рендера
 			html = renderStatsPage(stats, financeReport)
 
 			setTimeout(() => initStatsChart(stats.distribution), 100)
@@ -594,7 +571,6 @@ window.router = async (route: string) => {
 	contentBox.innerHTML = html
 }
 
-// --- ADMIN: EMPLOYEE FORM ---
 
 window.showAddEmployeeForm = () => {
 	document.getElementById('page-content')!.innerHTML = `
@@ -690,7 +666,6 @@ window.submitNewEmployee = async () => {
 	}
 }
 
-// --- CLIENT FORM ---
 
 window.showAddClientForm = () => {
 	document.getElementById('page-content')!.innerHTML = `
@@ -701,7 +676,6 @@ window.showAddClientForm = () => {
                 <i class="fas fa-info-circle" style="margin-right: 8px;"></i> Логин и пароль будут отправлены на Email.
             </div>
 
-            <!-- ИЗМЕНЕНИЕ ЗДЕСЬ: gap уменьшен до 10px -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                 <div class="form-group">
                     <label>Фамилия *</label>
@@ -765,11 +739,8 @@ window.showAddClientForm = () => {
 }
 
 window.submitNewClient = async () => {
-	// ВАЛИДАЦИЯ
 	let isValid = true
 
-	// Проверяем каждое поле и обновляем флаг isValid (используем &= чтобы проверить ВСЕ поля сразу)
-	// Важно: порядок вызова важен, чтобы подсветить все ошибки сразу
 	isValid =
 		validateField('ln', REGEX.MIN_2, 'err-ln', 'Минимум 2 буквы') && isValid
 	isValid =
@@ -796,22 +767,25 @@ window.submitNewClient = async () => {
 			'Некорректный Email'
 		) && isValid
 	isValid =
-		validateField('dob', REGEX.NOT_EMPTY, 'err-dob', 'Выберите дату') && isValid
-	// Телефон опционален, но если введен - проверим
-	const phVal = (document.getElementById('ph') as HTMLInputElement).value
-	if (phVal) {
-		isValid =
-			validateField(
-				'ph',
-				v => REGEX.PHONE.test(v),
-				'err-ph',
-				'Неверный формат'
-			) && isValid
-	}
+		validateField(
+			'dob',
+			REGEX.NOT_EMPTY,
+			'err-dob',
+			'Выберите дату'
+		) && isValid
+	isValid = validateField(
+			'ph',
+			v => REGEX.PHONE.test(v),
+			'err-ph',
+			'Неверный формат'
+		) && isValid
+	// const phVal = (document.getElementById('ph') as HTMLInputElement).value
+	// if (phVal) {
+		// isValid =	
+	// }
 
-	if (!isValid) return // Если есть ошибки, не отправляем
+	if (!isValid) return
 
-	// Сбор данных (как раньше)
 	const data = {
 		email: (document.getElementById('clEmail') as HTMLInputElement).value,
 		firstName: (document.getElementById('fn') as HTMLInputElement).value,
@@ -831,7 +805,41 @@ window.submitNewClient = async () => {
 	}
 }
 
-// --- LOAN FORM ---
+function validateField(
+	id: string,
+	rule: (val: string) => boolean,
+	errorId: string,
+	errorText: string
+): boolean {
+	const input = document.getElementById(id) as HTMLInputElement
+	const errorBox = document.getElementById(errorId) as HTMLElement
+
+	if (!input || !errorBox) return false
+
+	const isValid = rule(input.value.trim())
+
+	if (!isValid) {
+		input.classList.add('input-error')
+		errorBox.innerText = errorText
+		return false
+	} else {
+		input.classList.remove('input-error')
+		errorBox.innerText = ''
+		return true
+	}
+}
+
+const REGEX = {
+	EMAIL: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+	PASSPORT_SERIES: /^\d{4}$/,
+	PASSPORT_NUMBER: /^\d{6}$/,
+	PHONE: /^[+]?[\d\s()-]{10,}$/,
+	MIN_2: (val: string) => val.length >= 2,
+	MIN_4: (val: string) => val.length >= 4,
+	MIN_6: (val: string) => val.length >= 6,
+	NOT_EMPTY: (val: string) => val.length > 0,
+}
+
 
 window.openNewLoanModal = async (clientId: number) => {
 	currentLoanClientId = clientId
@@ -892,7 +900,6 @@ window.previewSchedule = () => {
 	const amountInput = document.getElementById('loanAmount') as HTMLInputElement
 	const termInput = document.getElementById('loanTerm') as HTMLInputElement
 
-	// Получаем числа (защита от пустоты || 0)
 	const amount = Number(amountInput.value) || 0
 	const term = Number(termInput.value) || 0
 
@@ -904,7 +911,6 @@ window.previewSchedule = () => {
 	const termErr = document.getElementById('termError')
 
 	if (prod && previewBox && limitsBox) {
-		// 1. ВЫВОДИМ ИНФОРМАЦИЮ О ПРОДУКТЕ
 		limitsBox.innerHTML = `
             <!-- Добавили margin-bottom: 8px -->
             <div style="margin-bottom: 8px;">
@@ -922,10 +928,8 @@ window.previewSchedule = () => {
             </div>
         `
 
-		// 2. ВАЛИДАЦИЯ (Проверка границ)
 		let isValid = true
 
-		// Проверка суммы
 		if (amount < prod.minAmount || amount > prod.maxAmount) {
 			amountInput.style.borderColor = '#e74c3c'
 			amountErr!.innerText = `Выход за лимиты (от ${prod.minAmount.toLocaleString()})`
@@ -935,7 +939,6 @@ window.previewSchedule = () => {
 			amountErr!.innerText = ''
 		}
 
-		// Проверка срока
 		if (term < prod.minTerm || term > prod.maxTerm) {
 			termInput.style.borderColor = '#e74c3c'
 			termErr!.innerText = `Срок от ${prod.minTerm} до ${prod.maxTerm} мес.`
@@ -945,14 +948,12 @@ window.previewSchedule = () => {
 			termErr!.innerText = ''
 		}
 
-		// 3. РАСЧЕТ ИЛИ ОШИБКА
 		if (!isValid) {
 			previewBox.innerHTML =
 				'<span style="color:#e74c3c"><i class="fas fa-exclamation-triangle"></i> Параметры не соответствуют условиям продукта</span>'
 			return
 		}
 
-		// Если всё ок - считаем
 		const res = api.calculatePreview(amount, prod.rate, term)
 
 		previewBox.innerHTML = `
@@ -995,12 +996,9 @@ window.issueLoan = async () => {
 		employeeId: currentUser.id,
 	}
 
-	// Получаем ответ с ID контракта
 	const response = await api.issueLoan(data)
 
 	if (response && response.contractId) {
-		// 1. Сообщаем об успехе
-		// Используем confirm, чтобы спросить о печати
 		const printNow = confirm(
 			'Кредит успешно оформлен! Распечатать договор и график платежей?'
 		)
@@ -1014,13 +1012,11 @@ window.issueLoan = async () => {
 }
 
 window.showSchedule = async (id: number) => {
-	// 1. Загружаем график И историю операций параллельно
 	const [schedule, operations] = await Promise.all([
 		api.getSchedule(id),
 		api.getLoanOperations(id),
 	])
 
-	// 2. Логика определения статуса (как было раньше)
 	const isClient = currentUser && currentUser.role === 'client'
 	let isLoanActive = false
 	let currentBalance = 0
@@ -1033,7 +1029,6 @@ window.showSchedule = async (id: number) => {
 		isLoanActive = loan.status === 'active' && loan.balance > 0
 	}
 
-	// 3. Формируем таблицу Графика (как было раньше)
 	let nextPaymentFound = false
 	const scheduleRows = schedule
 		.map((r: any) => {
@@ -1064,13 +1059,11 @@ window.showSchedule = async (id: number) => {
 		})
 		.join('')
 
-	// 4. Формируем таблицу ИСТОРИИ ОПЕРАЦИЙ (Новое)
 	const operationsRows = operations
 		.map((op: any) => {
 			let typeName = op.type
 			let icon = '<i class="fas fa-circle" style="font-size:8px"></i>'
 
-			// Красивые названия
 			if (op.type === 'issue') {
 				typeName = 'Выдача кредита'
 				icon = '<i class="fas fa-hand-holding-usd" style="color:green"></i>'
@@ -1169,12 +1162,13 @@ function renderLogsPage(logs: any[]) {
 					.join('')
 			}
 
-			// Цвета для бейджиков
 			let badgeColor = '#f0f0f0'
-			if (l.action === 'ISSUE_LOAN') badgeColor = '#e3f2fd' // Голубой
-			if (l.action === 'PAYMENT') badgeColor = '#e8f5e9' // Зеленый
-			if (l.action === 'EARLY_REPAYMENT') badgeColor = '#fff3e0' // Оранжевый
-			if (l.action === 'CREATE_CLIENT') badgeColor = '#f3e5f5' // Фиолетовый
+			if (l.action === 'ISSUE_LOAN') badgeColor = '#d8b6efff'
+			if (l.action === 'BACKUP_DB') badgeColor = '#e7ccf8ff'
+			if (l.action === 'REGISTER_EMPLOYEE') badgeColor = '#f8c7c7ae'
+			if (l.action === 'PAYMENT') badgeColor = '#e5f6d4ff' 
+			if (l.action === 'EARLY_REPAYMENT') badgeColor = '#fff3e0' 
+			if (l.action === 'CREATE_CLIENT') badgeColor = '#f3e5f5' 
 
 			return `
             <tr>
@@ -1199,7 +1193,7 @@ function renderLogsPage(logs: any[]) {
             <!-- ИЗМЕНЕНИЕ: padding: 20px, gap: 30px -->
             <div style="background: #fafafa; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 30px; align-items: flex-end;">
                 
-                <div class="form-group" style="margin-bottom:0; flex:1">
+                <div class="form-group" onchange="window.applyLogFilters()" style="margin-bottom:0; flex:1">
                     <label style="margin-bottom: 8px; display:block;">Тип события</label>
                     <select id="filterAction" style="width: 100%;">
                         <option value="">Все события</option>
@@ -1208,15 +1202,14 @@ function renderLogsPage(logs: any[]) {
                         <option value="PAYMENT">Платеж по графику</option>
                         <option value="CREATE_CLIENT">Создание клиента</option>
                         <option value="REGISTER_EMPLOYEE">Регистрация сотрудника</option>
+						<option value="BACKUP_DB">Создание резервной копии</option>
                     </select>
                 </div>
                 
-                <div class="form-group" style="margin-bottom:0; flex:1">
+                <div class="form-group" oninput="window.applyLogFilters()" style="margin-bottom:0; flex:1">
                     <label style="margin-bottom: 8px; display:block;">Дата (с какого числа)</label>
                     <input type="date" id="filterDate" style="width: 100%;">
                 </div>
-                
-                <button class="btn btn-primary" onclick="window.applyLogFilters()" style="height: 42px;">Применить фильтр</button>
             </div>
 
             <table>
@@ -1230,11 +1223,11 @@ function renderLogsPage(logs: any[]) {
                         <th>Детали</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="logsTableBody">
                     ${
 											rows.length > 0
 												? rows
-												: '<tr><td colspan="5" style="text-align:center; padding:30px; color:#888">Записей не найдено</td></tr>'
+												: '<tr><td colspan="5" style="text-align:center; padding:20px; color:#888">Записей не найдено</td></tr>'
 										}
                 </tbody>
             </table>
@@ -1247,59 +1240,31 @@ window.applyLogFilters = async () => {
 		.value
 	const date = (document.getElementById('filterDate') as HTMLInputElement).value
 
-	const filters: any = {}
-	if (action) filters.action = action
-	if (date) filters.from = date
+	currentLogFilters = {}
+	if (action) currentLogFilters.action = action
+	if (date) currentLogFilters.from = date
 
-	const logs = await api.getLogs(filters)
-
-	// 4. Перерисовываем страницу с новыми данными
-	document.getElementById('page-content')!.innerHTML = renderLogsPage(logs)
+	await updateLogsTableOnly()
 }
 
 function getPageTitle(t: string) {
 	const m: any = {
 		dashboard: 'Обзор',
 		clients: 'Управление клиентами',
-		loans: 'Портфель',
+		loans: 'Список кредитов',
 		employees: 'Сотрудники',
 	}
 	return m[t] || ''
 }
 
-function initApp() {
-	const savedToken = localStorage.getItem('authToken')
-	const savedUser = localStorage.getItem('userData')
-
-	if (savedToken && savedUser) {
-		// Если данные есть в памяти, восстанавливаем их
-		try {
-			currentUser = JSON.parse(savedUser)
-			// Восстанавливаем последнюю открытую вкладку (по желанию) или идем на главную
-			window.router('dashboard')
-		} catch (e) {
-			// Если данные повреждены — выходим
-			window.logout()
-		}
-	} else {
-		// Если данных нет — показываем вход
-		renderLogin()
-	}
-}
-
-// --- PDF GENERATOR ---
-
 async function generateContractPDF(contractId: number) {
-	// 1. Собираем данные
 	const contract = await api.getLoanById(contractId)
 	if (!contract) return
 
 	const schedule = await api.getSchedule(contractId)
 
-	// Текущая дата для шапки
 	const today = new Date().toLocaleDateString('ru-RU')
 
-	// 2. Формируем таблицу графика для PDF
 	const tableBody = [
 		[
 			{ text: '№', style: 'tableHeader' },
@@ -1322,14 +1287,12 @@ async function generateContractPDF(contractId: number) {
 		])
 	})
 
-	// 3. Описание документа (DD) для pdfmake
 	const docDefinition = {
 		info: {
 			title: `Договор №${contract.contractNumber}`,
 			author: 'RoseBank AIS',
 		},
 		content: [
-			// Шапка
 			{ text: 'ПАО «ROSEBANK»', style: 'brand', alignment: 'right' },
 			{
 				text: `КРЕДИТНЫЙ ДОГОВОР № ${contract.contractNumber}`,
@@ -1337,7 +1300,6 @@ async function generateContractPDF(contractId: number) {
 				margin: [0, 20, 0, 10],
 			},
 
-			// Место и дата
 			{
 				columns: [
 					{ text: 'г. Москва', width: '*' },
@@ -1346,7 +1308,6 @@ async function generateContractPDF(contractId: number) {
 				margin: [0, 0, 0, 20],
 			},
 
-			// Тело договора
 			{ text: '1. ПРЕДМЕТ ДОГОВОРА', style: 'subheader' },
 			{
 				text: [
@@ -1368,7 +1329,6 @@ async function generateContractPDF(contractId: number) {
 				margin: [0, 0, 0, 20],
 			},
 
-			// График
 			{ text: '2. ГРАФИК ПЛАТЕЖЕЙ', style: 'subheader' },
 			{
 				style: 'tableExample',
@@ -1380,7 +1340,6 @@ async function generateContractPDF(contractId: number) {
 				layout: 'lightHorizontalLines',
 			},
 
-			// Подписи
 			{
 				text: '3. АДРЕСА И РЕКВИЗИТЫ СТОРОН',
 				style: 'subheader',
@@ -1419,7 +1378,6 @@ async function generateContractPDF(contractId: number) {
 		},
 	}
 
-	// Генерируем и открываем в новом окне
 	pdfMake.createPdf(docDefinition).open()
 }
 
@@ -1432,42 +1390,6 @@ window.doBackup = async () => {
 	}
 }
 
-function validateField(
-	id: string,
-	rule: (val: string) => boolean,
-	errorId: string,
-	errorText: string
-): boolean {
-	const input = document.getElementById(id) as HTMLInputElement
-	const errorBox = document.getElementById(errorId) as HTMLElement
-
-	if (!input || !errorBox) return false
-
-	const isValid = rule(input.value.trim())
-
-	if (!isValid) {
-		input.classList.add('input-error')
-		errorBox.innerText = errorText
-		return false
-	} else {
-		input.classList.remove('input-error')
-		errorBox.innerText = ''
-		return true
-	}
-}
-
-// Регулярки
-const REGEX = {
-	EMAIL: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-	PASSPORT_SERIES: /^\d{4}$/, // 4 цифры
-	PASSPORT_NUMBER: /^\d{6}$/, // 6 цифр
-	PHONE: /^[+]?[\d\s()-]{10,}$/, // Телефон (простой вариант)
-	MIN_2: (val: string) => val.length >= 2,
-	MIN_4: (val: string) => val.length >= 4,
-	MIN_6: (val: string) => val.length >= 6,
-	NOT_EMPTY: (val: string) => val.length > 0,
-}
-
 window.payInstallment = async (
 	scheduleId: number,
 	amount: number,
@@ -1476,28 +1398,23 @@ window.payInstallment = async (
 	if (!confirm(`Выполнить списание средств в размере ${amount.toFixed(2)} ₽?`))
 		return
 
-	// В реальном приложении здесь был бы ввод карты, но у нас эмуляция
 	const res = await api.makePayment(scheduleId)
 
 	if (res && res.message) {
 		alert('Платеж успешно выполнен!')
-		// Обновляем график, чтобы увидеть статус "Оплачено"
 		window.showSchedule(contractId)
 	}
 }
 
-// Хелпер для форматирования денег
-// Делает: 12345.6 -> "12 345,60"
 function formatMoney(amount: number): string {
 	return amount.toLocaleString('ru-RU', {
 		minimumFractionDigits: 2,
 		maximumFractionDigits: 2,
-		useGrouping: true, // Включает разделение тысяч пробелами
+		useGrouping: true, 
 	})
 }
 
 window.doEarlyRepayment = async (contractId: number, balance: number) => {
-	// Красивое подтверждение
 	if (
 		!confirm(
 			`Вы действительно хотите выполнить ПОЛНОЕ досрочное погашение?\n\nСумма списания: ${formatMoney(
@@ -1512,18 +1429,13 @@ window.doEarlyRepayment = async (contractId: number, balance: number) => {
 
 	if (res && res.message) {
 		alert(`Успешно! Списано: ${formatMoney(res.paidAmount)} ₽. Кредит закрыт.`)
-		// Возвращаемся в список кредитов
 		window.router('my-loans')
 	}
 }
 
-// HTML каркас страницы статистики
-// Обновленная функция принимает 2 аргумента
 function renderStatsPage(stats: any, financeReport: any[]) {
     
-    // Формируем строки таблицы
     const reportRows = financeReport.map(r => {
-        // Красим "Чистый поток": Зеленый если +, Красный если -
         const color = r.net >= 0 ? '#2e7d32' : '#c62828';
         const sign = r.net > 0 ? '+' : '';
 
@@ -1590,22 +1502,53 @@ function renderStatsPage(stats: any, financeReport: any[]) {
     `;
 }
 
-// Функция инициализации Chart.js
+async function updateLogsTableOnly() {
+    const tbody = document.querySelector('#logsTableBody');
+    if (!tbody) return; 
+
+    const logs = await api.getLogs(currentLogFilters);
+
+    const rowsHtml = logs.map((l: any) => {
+        let detailsStr = '';
+        if (l.details) {
+            detailsStr = Object.entries(l.details)
+                .map(([k, v]) => `<span style="background:#eee; padding:2px 4px; border-radius:4px; font-size:0.8em; margin-right: 4px;">${k}: ${v}</span>`)
+                .join('');
+        }
+
+        let badgeColor = '#f0f0f0';
+        if (l.action === 'ISSUE_LOAN') badgeColor = '#e3f2fd';
+        if (l.action === 'PAYMENT') badgeColor = '#e8f5e9';
+        if (l.action === 'EARLY_REPAYMENT') badgeColor = '#fff3e0';
+        if (l.action === 'CREATE_CLIENT') badgeColor = '#f3e5f5';
+
+        return `
+            <tr>
+                <td style="font-size:0.85em; color:#666;">${new Date(l.date).toLocaleString()}</td>
+                <td><b>${l.user}</b></td>
+                <td><span style="background:${badgeColor}; padding: 4px 8px; border-radius:12px; font-size:0.85em; font-weight:500">${l.action}</span></td>
+                <td>${l.entity} #${l.entityId}</td>
+                <td>${detailsStr}</td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.innerHTML = rowsHtml.length > 0 ? rowsHtml : '<tr><td colspan="5" style="text-align:center; padding:30px; color:#888">Записей не найдено</td></tr>';
+}
+
 function initStatsChart(data: any[]) {
     const ctx = document.getElementById('productsChart') as HTMLCanvasElement;
     if (!ctx) return;
 
-    // Подготовка данных для Chart.js
     const labels = data.map(d => d.label);
     const values = data.map(d => d.value);
     
-    // Палитра цветов (розово-фиолетовая гамма)
     const colors = [
         '#C06C84', '#6C5B7B', '#355C7D', '#F67280', '#F8B195', '#A8E6CF'
     ];
 
     new Chart(ctx, {
-        type: 'doughnut', // Тип: пончик (или 'pie' для круга)
+        type: 'doughnut',
         data: {
             labels: labels,
             datasets: [{
@@ -1627,6 +1570,21 @@ function initStatsChart(data: any[]) {
     });
 }
 
-// Init
+function initApp() {
+	const savedToken = localStorage.getItem('authToken')
+	const savedUser = localStorage.getItem('userData')
+
+	if (savedToken && savedUser) {
+		try {
+			currentUser = JSON.parse(savedUser)
+			window.router('dashboard')
+		} catch (e) {
+			window.logout()
+		}
+	} else {
+		renderLogin()
+	}
+}
+
 renderLogin()
 initApp()

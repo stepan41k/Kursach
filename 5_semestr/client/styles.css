@@ -1,10 +1,9 @@
 :root {
-    /* Палитра: Пастельный розовый и Белый */
-    --primary-pink: #FFD1DC;       /* Основной пастельный */
-    --primary-pink-dark: #E5B0BC;  /* Для ховера и границ */
-    --accent-rose: #C06C84;        /* Для текста и акцентов */
+    --primary-pink: #FFD1DC;       
+    --primary-pink-dark: #E5B0BC;  
+    --accent-rose: #C06C84;       
     --bg-white: #FFFFFF;
-    --bg-light: #FDF9FA;           /* Очень легкий розовый оттенок фона */
+    --bg-light: #FDF9FA;          
     --text-main: #333333;
     --text-secondary: #666666;
     --shadow: 0 4px 20px rgba(192, 108, 132, 0.1);
@@ -25,13 +24,11 @@ body {
     overflow: hidden;
 }
 
-/* --- Layout --- */
 .app-container {
     display: flex;
     height: 100vh;
 }
 
-/* Sidebar */
 .sidebar {
     width: 260px;
     background-color: var(--bg-white);
@@ -69,7 +66,6 @@ body {
     font-weight: 500;
 }
 
-/* Main Content */
 .main-content {
     flex: 1;
     overflow-y: auto;
@@ -101,7 +97,6 @@ body {
     font-weight: bold;
 }
 
-/* --- Components --- */
 .card {
     background: var(--bg-white);
     border-radius: var(--radius);
@@ -164,7 +159,6 @@ input:focus, select:focus {
     border-color: var(--primary-pink-dark);
 }
 
-/* Tables */
 table {
     width: 100%;
     border-collapse: collapse;
@@ -192,7 +186,6 @@ td {
 .status-active { background: #e6fffa; color: #00b894; }
 .status-closed { background: #f0f0f0; color: #999; }
 
-/* Login Screen */
 .login-wrapper {
     display: flex;
     justify-content: center;
@@ -206,7 +199,6 @@ td {
     text-align: center;
 }
 
-/* Document/Agreement */
 .document-view {
     font-family: 'Times New Roman', serif;
     line-height: 1.6;
@@ -216,15 +208,14 @@ td {
 }
 
 .input-error {
-    border-color: #e74c3c !important; /* Красная рамка */
+    border-color: #e74c3c !important;
     background-color: #fdf0ef;
 }
 
-/* Текст ошибки под полем */
 .error-message {
     color: #e74c3c;
     font-size: 0.8rem;
     margin-top: 4px;
     display: block;
-    min-height: 18px; /* Чтобы форма не прыгала */
+    min-height: 18px;
 }

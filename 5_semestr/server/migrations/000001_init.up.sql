@@ -295,12 +295,11 @@ JOIN clients c ON lc.client_id = c.id
 WHERE rs.payment_date < CURRENT_DATE AND rs.is_paid = false;
 
 
--- Триггер для автоматического логирования изменений (Аудит)
 CREATE OR REPLACE FUNCTION fn_audit_log() RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO audit_logs (user_id, action_type, entity_name, entity_id, old_values, new_values)
     VALUES (
-        NULL, -- Здесь можно брать ID текущего сессионного пользователя
+        NULL,
         TG_OP,
         TG_TABLE_NAME,
         COALESCE(NEW.id, OLD.id),
@@ -315,9 +314,9 @@ CREATE TRIGGER trg_audit_clients
 AFTER INSERT OR UPDATE OR DELETE ON clients
 FOR EACH ROW EXECUTE FUNCTION fn_audit_log();
 
-CREATE TRIGGER trg_audit_contracts
-AFTER INSERT OR UPDATE OR DELETE ON loan_contracts
-FOR EACH ROW EXECUTE FUNCTION fn_audit_log();
+-- CREATE TRIGGER trg_audit_contracts
+-- AFTER INSERT OR UPDATE OR DELETE ON loan_contracts
+-- FOR EACH ROW EXECUTE FUNCTION fn_audit_log();
 
 
 -- 1. Создаем физические роли в БД (если их нет)
