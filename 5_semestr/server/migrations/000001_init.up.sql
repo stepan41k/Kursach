@@ -217,7 +217,6 @@ DECLARE
     v_contract_num VARCHAR(50);
     v_rate NUMERIC;
 BEGIN
-    -- Валидация условий продукта
     SELECT interest_rate INTO v_rate FROM credit_products WHERE id = p_product_id AND is_active = true;
     
     v_contract_num := 'D-' || to_char(NOW(), 'YYYYMMDD') || '-' || nextval('loan_contracts_id_seq');
@@ -238,7 +237,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 
--- Процедура гашения (планового)
 CREATE OR REPLACE PROCEDURE process_payment(
     p_contract_id BIGINT,
     p_amount NUMERIC
@@ -255,7 +253,6 @@ BEGIN
     INSERT INTO operations (contract_id, operation_type, amount, description)
     VALUES (p_contract_id, 'scheduled_payment', p_amount, 'Плановый платеж');
 
-    -- Если все оплачено, закрываем договор
     IF NOT EXISTS (SELECT 1 FROM repayment_schedule WHERE contract_id = p_contract_id AND is_paid = false) THEN
         UPDATE loan_contracts SET status = 'closed', closed_at = NOW() WHERE id = p_contract_id;
     END IF;
@@ -263,7 +260,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 
--- Представление для формирования Бланка кредитного договора
 CREATE OR REPLACE VIEW view_contract_document AS
 SELECT 
     lc.contract_number,
@@ -281,7 +277,6 @@ JOIN clients c ON lc.client_id = c.id
 JOIN credit_products cp ON lc.product_id = cp.id;
 
 
--- Представление для менеджера: Список задолженностей
 CREATE OR REPLACE VIEW view_overdue_payments AS
 SELECT 
     c.last_name || ' ' || c.first_name as client_name,
@@ -319,7 +314,6 @@ FOR EACH ROW EXECUTE FUNCTION fn_audit_log();
 -- FOR EACH ROW EXECUTE FUNCTION fn_audit_log();
 
 
--- 1. Создаем физические роли в БД (если их нет)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'bank_admin') THEN
@@ -334,7 +328,6 @@ BEGIN
 END $$;
 
 
--- 2. Настройка прав для Менеджера
 GRANT SELECT, INSERT, UPDATE ON clients TO bank_manager;
 GRANT SELECT, INSERT ON loan_contracts TO bank_manager;
 GRANT SELECT ON repayment_schedule TO bank_manager;
@@ -343,15 +336,12 @@ GRANT SELECT ON view_overdue_payments TO bank_manager;
 GRANT EXECUTE ON PROCEDURE open_loan_contract TO bank_manager;
 GRANT EXECUTE ON PROCEDURE process_payment TO bank_manager;
 
--- 3. Настройка прав для Клиента (только чтение своих данных через View)
--- Для полной реализации RLS (Row Level Security) используется:
 ALTER TABLE loan_contracts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY client_own_contracts ON loan_contracts
     FOR SELECT
     USING (client_id IN (SELECT id FROM clients WHERE user_id = CAST(current_setting('app.current_user_id') AS BIGINT)));
 
--- 4. Настройка прав для Админа
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO bank_admin;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO bank_admin;
 
@@ -366,12 +356,12 @@ ALTER TABLE loan_contracts
 ADD CONSTRAINT chk_loan_amount_positive 
 CHECK (amount > 0);
 
--- Баланс не может быть отрицательным (защита от ошибок в расчетах)
+
 ALTER TABLE loan_contracts 
 ADD CONSTRAINT chk_loan_balance_non_negative 
 CHECK (balance >= 0);
 
--- Ставка должна быть адекватной (от 0% до 1000%)
+
 ALTER TABLE loan_contracts 
 ADD CONSTRAINT chk_interest_rate_valid 
 CHECK (interest_rate >= 0 AND interest_rate <= 1000);
@@ -544,7 +534,7 @@ BEGIN
     RETURNING balance INTO v_new_balance;
 
     INSERT INTO operations (contract_id, operation_type, amount, description)
-    VALUES (v_contract_id, 'scheduled_payment', v_payment_amount, 'Платеж через процедуру БД');
+    VALUES (v_contract_id, 'scheduled_payment', v_payment_amount, 'Здесь можно добавит способ оплаты');
 
     IF v_new_balance <= 0 THEN
         UPDATE loan_contracts 
@@ -624,7 +614,7 @@ BEGIN
     END LOOP;
 
     INSERT INTO operations (contract_id, employee_id, operation_type, amount, description)
-    VALUES (p_new_id, p_employee_id, 'issue', p_amount, 'Выдача кредита (PL/pgSQL)');
+    VALUES (p_new_id, p_employee_id, 'issue', p_amount, '');
 END;
 $$;
 
@@ -652,7 +642,6 @@ BEGIN
         RAISE EXCEPTION 'Договор не найден';
     END IF;
 
-    -- Проверка безопасности (IDOR)
     IF v_owner_id != p_user_id THEN
         RAISE EXCEPTION 'Доступ запрещен: это не ваш кредит';
     END IF;
@@ -864,7 +853,6 @@ SELECT
     COALESCE(e.first_name, c.first_name)::VARCHAR AS first_name,
     COALESCE(e.last_name, c.last_name)::VARCHAR AS last_name,
     COALESCE(e.email, c.email)::VARCHAR AS email,
-    -- ID специфичных сущностей
     c.id AS client_id,
     e.id AS employee_id
 FROM users u
@@ -884,7 +872,6 @@ SELECT
     lc.start_date,
     lc.created_at,
     cp.name AS product_name,
-    -- Агрегация из графика платежей
     COUNT(rs.id) AS total_payments,
     COUNT(rs.id) FILTER (WHERE rs.is_paid = TRUE) AS paid_payments,
     COALESCE(SUM(rs.payment_amount) FILTER (WHERE rs.is_paid = TRUE), 0) AS total_paid_money
@@ -1119,11 +1106,8 @@ $$;
 CREATE OR REPLACE VIEW v_monthly_financials AS
 SELECT 
     TO_CHAR(operation_date, 'YYYY-MM') AS month_year,
-    -- Сумма выдачи
     SUM(CASE WHEN operation_type = 'issue' THEN amount ELSE 0 END) AS total_issued,
-    -- Сумма возвратов (платежи + досрочка)
     SUM(CASE WHEN operation_type IN ('scheduled_payment', 'early_repayment') THEN amount ELSE 0 END) AS total_repaid,
-    -- Чистый денежный поток
     SUM(CASE WHEN operation_type IN ('scheduled_payment', 'early_repayment') THEN amount ELSE -amount END) AS net_cash_flow,
     COUNT(*) AS operations_count
 FROM operations
@@ -1135,25 +1119,20 @@ CREATE OR REPLACE VIEW v_loan_dossier AS
 SELECT 
     lc.id AS contract_id,
     lc.contract_number,
-    -- Клиент
     c.last_name || ' ' || c.first_name || ' ' || COALESCE(c.middle_name, '') AS client_name,
     c.passport_series || ' ' || c.passport_number AS passport,
     c.phone,
-    -- Продукт
     cp.name AS product_name,
     lc.interest_rate,
-    lc.term_months, -- <--- ДОБАВИЛИ ЭТО ПОЛЕ
-    -- Финансы
+    lc.term_months, 
     lc.amount AS issued_amount,
     lc.balance AS remaining_debt,
     (lc.amount - lc.balance) AS total_paid_body,
     ROUND(((lc.amount - lc.balance) / lc.amount * 100), 1) AS progress_percent,
-    -- Статус
     lc.status,
     lc.start_date,
     lc.end_date,
-    lc.created_at, -- <--- ДОБАВИЛИ ДЛЯ СОРТИРОВКИ
-    -- Менеджер
+    lc.created_at,
     e.last_name || ' ' || e.first_name AS manager_name
 FROM loan_contracts lc
 JOIN clients c ON lc.client_id = c.id
@@ -1182,19 +1161,16 @@ $$ LANGUAGE plpgsql;
 
 CREATE MATERIALIZED VIEW mv_dashboard_cache AS
 WITH 
-    -- Считаем выдачу
     issued AS (
         SELECT COALESCE(SUM(amount), 0) AS total 
         FROM loan_contracts 
         WHERE status != 'draft'
     ),
-    -- Считаем возвраты
     repaid AS (
         SELECT COALESCE(SUM(amount), 0) AS total 
         FROM operations 
         WHERE operation_type IN ('scheduled_payment', 'early_repayment')
     ),
-    -- Считаем распределение (диаграмма)
     dist AS (
         SELECT json_agg(row_to_json(t)) AS data FROM (
             SELECT cp.name AS "label", COUNT(lc.id) AS "value"
@@ -1204,15 +1180,13 @@ WITH
         ) t
     )
 SELECT 
-    1 AS id, -- Фиктивный ID для индекса
+    1 AS id,
     json_build_object(
         'totalIssued', (SELECT total FROM issued),
         'totalRepaid', (SELECT total FROM repaid),
         'distribution', COALESCE((SELECT data FROM dist), '[]'::json)
     ) AS stats_json;
 
--- 3. Создаем УНИКАЛЬНЫЙ ИНДЕКС
--- Это обязательно, чтобы можно было обновлять представление без блокировки всей базы (CONCURRENTLY)
 CREATE UNIQUE INDEX idx_mv_dashboard_cache ON mv_dashboard_cache (id);
 
 

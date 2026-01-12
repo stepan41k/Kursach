@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -62,6 +61,7 @@ func (h *HandlerDriver) RegisterHandler(c *gin.Context) {
 	adminID, _ := c.Get("userId")
 	
 	LogAction(ctx, tx, adminID.(int64), "REGISTER_EMPLOYEE", "employees", newUserID, map[string]string{
+		"role": req.Position,
 		"login": req.Login,
 		"name":  fmt.Sprintf("%s %s", req.FirstName, req.LastName),
 		"email": req.Email,
@@ -171,7 +171,7 @@ func (h *HandlerDriver) CreateClient(c *gin.Context) {
 		return
 	}
 
-	genLogin := strings.ReplaceAll(req.PassportSeries+req.PassportNumber, " ", "")
+	genLogin := password.GenerateRandomPassword(8)
 	genPassword := password.GenerateRandomPassword(8)
 	
 
@@ -286,7 +286,7 @@ func (h *HandlerDriver) IssueLoan(c *gin.Context) {
 		return
 	}
 
-	LogAction(ctx, tx, req.EmployeeID, "ISSUE_LOAN", "loan_contracts", newContractID, map[string]string{
+	LogAction(ctx, tx, req.EmployeeID, "TOOK_LOAN", "loan_contracts", newContractID, map[string]string{
 		"amount": fmt.Sprintf("%.2f", req.Amount),
 		"type":   "via_stored_procedure",
 	})

@@ -451,22 +451,31 @@ window.router = async (route: string) => {
 		const loans = await api.getLoans()
 		if (loans && loans.length > 0) {
 			const rows = loans
-				.map(
-					(l: LoanContract) => `
+				.map((l: any) => {
+					// ЛОГИКА ЦВЕТОВ
+					let badgeStyle = 'background:#e8f5e9; color:#2e7d32'
+
+					if (l.status === 'closed') {
+						badgeStyle = 'background:#ffebee; color:#c62828'
+					}
+
+					return `
                 <tr>
                     <td>${l.contractNumber}</td>
                     <td>${l.clientName}</td>
                     <td>${l.productName}</td>
-                    <td>${l.amount.toLocaleString()} ₽</td>
-                    <td><span class="status-badge status-active">${
-											l.status
-										}</span></td>
+                    <td>${formatMoney(l.amount)} ₽</td>
+                    <!-- Применяем стиль здесь -->
+                    <td><span class="status-badge" style="${badgeStyle}">${
+						l.status
+					}</span></td>
                     <td><button class="btn btn-secondary" onclick="window.showSchedule(${
 											l.id
 										})">График</button></td>
                 </tr>`
-				)
+				})
 				.join('')
+
 			html = `<div class="card"><h3>Активные кредиты</h3><table><thead><tr><th>Номер</th><th>Клиент</th><th>Продукт</th><th>Сумма</th><th>Статус</th><th>Инфо</th></tr></thead><tbody>${rows}</tbody></table></div>`
 		} else {
 			html = `
@@ -521,29 +530,34 @@ window.router = async (route: string) => {
 		const loans = await api.getMyLoans()
 		if (loans.length > 0) {
 			const rows = loans
-				.map(
-					(l: any) => `
+				.map((l: any) => {
+					let badgeStyle = 'background:#e8f5e9; color:#2e7d32' 
+
+					if (l.status === 'closed') {
+						badgeStyle = 'background:#ffebee; color:#c62828' 
+					}
+					return `
                 <tr>
                     <td>${l.contractNumber}</td>
-					<td>
-						${l.productName}
-						<!-- Добавили вывод прогресса -->
-						<div style="font-size:0.8em; color:#888">Выплачено: ${
-											l.progress
-										} мес.</div>
-					</td>
-					<td>${formatMoney(l.amount)} ₽</td>
-                    <td>${l.amount.toLocaleString()} ₽</td>
+                    <td>
+                        ${l.productName}
+                        <div style="font-size:0.8em; color:#888">Выплачено: ${
+													l.progress || '?'
+												} мес.</div>
+                    </td>
+                    <td>${formatMoney(l.amount)} ₽</td>
                     <td>${new Date(l.startDate).toLocaleDateString()}</td>
-                    <td><span class="status-badge status-active">${
-											l.status
-										}</span></td>
+                    <!-- Применяем стиль здесь -->
+                    <td><span class="status-badge" style="${badgeStyle}">${
+						l.status
+					}</span></td>
                     <td><button class="btn btn-secondary" onclick="window.showSchedule(${
 											l.id
 										})">График</button></td>
                 </tr>`
-				)
+				})
 				.join('')
+
 			html = `<div class="card"><h3>Мои текущие кредиты</h3><table><thead><tr><th>Номер</th><th>Продукт</th><th>Сумма</th><th>Дата</th><th>Статус</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table></div>`
 		} else {
 			html = `
@@ -605,7 +619,12 @@ window.showAddEmployeeForm = () => {
                 <small id="err-eemail" class="error-message"></small>
             </div>
             
-            <div class="form-group"><label>Должность</label><input id="newEmpPos" value="Менеджер"></div>
+            <div class="form-group">
+                <label>Должность</label>
+                <select id="newEmpPos" style="padding: 12px;">
+                    <option value="Менеджер">Менеджер</option>
+                </select>
+            </div>
             
             <button class="btn btn-primary" onclick="window.submitNewEmployee()">Создать</button>
             <button class="btn btn-secondary" onclick="window.router('employees')">Отмена</button>
@@ -688,23 +707,23 @@ window.showAddClientForm = () => {
                     <small id="err-fn" class="error-message"></small>
                 </div>
                 <div class="form-group">
-                    <label>Отчество</label>
+                    <label>Отчество (При наличии)</label>
                     <input id="mn">
                     <small class="error-message"></small>
                 </div>
                 <div class="form-group">
-                    <label>Телефон</label>
+                    <label>Телефон *</label>
                     <input id="ph">
                     <small id="err-ph" class="error-message"></small>
                 </div>
                 
                 <div class="form-group">
-                    <label>Серия пасп. (4 цифры) *</label>
+                    <label>Серия паспорта *</label>
                     <input id="ps" maxlength="4">
                     <small id="err-ps" class="error-message"></small>
                 </div>
                 <div class="form-group">
-                    <label>Номер пасп. (6 цифр) *</label>
+                    <label>Номер паспорта *</label>
                     <input id="pn" maxlength="6">
                     <small id="err-pn" class="error-message"></small>
                 </div>
@@ -716,7 +735,7 @@ window.showAddClientForm = () => {
                 </div>
                 
                 <div class="form-group">
-                    <label>Email (обязательно) *</label>
+                    <label>Email *</label>
                     <input type="email" id="clEmail" placeholder="mail@example.com">
                     <small id="err-email" class="error-message"></small>
                 </div>
@@ -777,7 +796,7 @@ window.submitNewClient = async () => {
 			'ph',
 			v => REGEX.PHONE.test(v),
 			'err-ph',
-			'Неверный формат'
+			'Некорректный номер телефона'
 		) && isValid
 	// const phVal = (document.getElementById('ph') as HTMLInputElement).value
 	// if (phVal) {
@@ -932,7 +951,7 @@ window.previewSchedule = () => {
 
 		if (amount < prod.minAmount || amount > prod.maxAmount) {
 			amountInput.style.borderColor = '#e74c3c'
-			amountErr!.innerText = `Выход за лимиты (от ${prod.minAmount.toLocaleString()})`
+			amountErr!.innerText = `Выход за лимиты (от ${prod.minAmount.toLocaleString()} до ${prod.maxAmount.toLocaleString()})`
 			isValid = false
 		} else {
 			amountInput.style.borderColor = '#eee'
@@ -1041,7 +1060,7 @@ window.showSchedule = async (id: number) => {
 						actionCell = `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.8rem;" onclick="window.payInstallment(${r.id}, ${r.paymentAmount}, ${id})">Оплатить</button>`
 						nextPaymentFound = true
 					} else {
-						actionCell = `<span style="color:#999; font-size:0.85rem;"><i class="fas fa-lock"></i> По очереди</span>`
+						actionCell = `<span style="color:#999; font-size:0.85rem;"><i class="fas fa-lock"></i> Оплатите предыдущий</span>`
 					}
 				} else {
 					actionCell = `<span class="status-badge" style="background:#ffebee; color:#c62828">Не оплачено</span>`
@@ -1163,7 +1182,7 @@ function renderLogsPage(logs: any[]) {
 			}
 
 			let badgeColor = '#f0f0f0'
-			if (l.action === 'ISSUE_LOAN') badgeColor = '#d8b6efff'
+			if (l.action === 'TOOK_LOAN') badgeColor = '#d8b6efff'
 			if (l.action === 'BACKUP_DB') badgeColor = '#e7ccf8ff'
 			if (l.action === 'REGISTER_EMPLOYEE') badgeColor = '#f8c7c7ae'
 			if (l.action === 'PAYMENT') badgeColor = '#e5f6d4ff' 
@@ -1197,7 +1216,7 @@ function renderLogsPage(logs: any[]) {
                     <label style="margin-bottom: 8px; display:block;">Тип события</label>
                     <select id="filterAction" style="width: 100%;">
                         <option value="">Все события</option>
-                        <option value="ISSUE_LOAN">Выдача кредита</option>
+                        <option value="TOOK_LOAN">Выдача кредита</option>
                         <option value="EARLY_REPAYMENT">Досрочное погашение</option>
                         <option value="PAYMENT">Платеж по графику</option>
                         <option value="CREATE_CLIENT">Создание клиента</option>
@@ -1325,7 +1344,7 @@ async function generateContractPDF(contractId: number) {
 				alignment: 'justify',
 			},
 			{
-				text: `Цель кредитования: ${contract.productName}`,
+				text: `Кредитный продукт: ${contract.productName}`,
 				margin: [0, 0, 0, 20],
 			},
 
@@ -1352,7 +1371,7 @@ async function generateContractPDF(contractId: number) {
 						text: [
 							{ text: 'БАНК:\n', bold: true },
 							'ПАО «RoseBank»\n',
-							'Адрес: г. Москва, ул. Роз, 1\n',
+							'Адрес: г. Москва, ул. Пушкина, дом Колотушкина 1\n',
 							'БИК: 044525000\n\n',
 							'Менеджер: ___________________',
 						],
@@ -1517,10 +1536,12 @@ async function updateLogsTableOnly() {
         }
 
         let badgeColor = '#f0f0f0';
-        if (l.action === 'ISSUE_LOAN') badgeColor = '#e3f2fd';
-        if (l.action === 'PAYMENT') badgeColor = '#e8f5e9';
-        if (l.action === 'EARLY_REPAYMENT') badgeColor = '#fff3e0';
-        if (l.action === 'CREATE_CLIENT') badgeColor = '#f3e5f5';
+        if (l.action === 'TOOK_LOAN') badgeColor = '#d8b6efff'
+		if (l.action === 'BACKUP_DB') badgeColor = '#e7ccf8ff'
+		if (l.action === 'REGISTER_EMPLOYEE') badgeColor = '#f8c7c7ae'
+		if (l.action === 'PAYMENT') badgeColor = '#e5f6d4ff'
+		if (l.action === 'EARLY_REPAYMENT') badgeColor = '#fff3e0'
+		if (l.action === 'CREATE_CLIENT') badgeColor = '#f3e5f5' 
 
         return `
             <tr>
