@@ -1,3 +1,2 @@
 .env
-deploy/docker-compose.yml
-.deploy/backups
+deploy/backups

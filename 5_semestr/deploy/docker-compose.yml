@@ -39,7 +39,7 @@ services:
       SMTP_HOST: smtp.gmail.com 
       SMTP_PORT: 587      
       SMTP_USER: stepan41kr@gmail.com
-      SMTP_PASS: emru zcld ikfi byvp
+      SMTP_PASS: -
       SMTP_FROM: RoseBank Security <stepan41kr@gmail.com>
 
       POSTGRES_DB: mydb        
