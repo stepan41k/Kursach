@@ -166,6 +166,10 @@ class ApiService {
 	async makePayment(scheduleId: number) {
 		return this.request('/pay', 'POST', { scheduleId })
 	}
+	// Внутри класса ApiService
+	async getFinanceReport() {
+		return this.request('/finance-report') || []
+	}
 	async getLoanOperations(contractId: number) {
 		return this.request(`/loans/${contractId}/operations`) || []
 	}
@@ -542,7 +546,14 @@ window.router = async (route: string) => {
 					(l: any) => `
                 <tr>
                     <td>${l.contractNumber}</td>
-                    <td>${l.productName}</td>
+					<td>
+						${l.productName}
+						<!-- Добавили вывод прогресса -->
+						<div style="font-size:0.8em; color:#888">Выплачено: ${
+											l.progress
+										} мес.</div>
+					</td>
+					<td>${formatMoney(l.amount)} ₽</td>
                     <td>${l.amount.toLocaleString()} ₽</td>
                     <td>${new Date(l.startDate).toLocaleDateString()}</td>
                     <td><span class="status-badge status-active">${
@@ -561,17 +572,19 @@ window.router = async (route: string) => {
                 <h3>У вас пока нет активных кредитов</h3>
             </div>`
 		}
-	} // Внутри window.router
-	else if (route === 'stats') {
-		// Проверка прав
+	} else if (route === 'stats') {
 		if (currentUser!.role === 'client') {
 			html = `<div class="card">Доступ запрещен</div>`
 		} else {
-			// 1. Грузим данные
-			const stats = await api.getStats()
-			// 2. Рисуем HTML-каркас
-			html = renderStatsPage(stats)
-			// 3. (Важно!) Рисуем график с небольшой задержкой, чтобы HTML успел вставиться в DOM
+			// ЗАГРУЖАЕМ ОБА ОТЧЕТА: общую статистику и финансовую таблицу
+			const [stats, financeReport] = await Promise.all([
+				api.getStats(),
+				api.getFinanceReport(),
+			])
+
+			// Передаем оба объекта в функцию рендера
+			html = renderStatsPage(stats, financeReport)
+
 			setTimeout(() => initStatsChart(stats.distribution), 100)
 		}
 	}
@@ -1505,9 +1518,29 @@ window.doEarlyRepayment = async (contractId: number, balance: number) => {
 }
 
 // HTML каркас страницы статистики
-function renderStatsPage(stats: any) {
+// Обновленная функция принимает 2 аргумента
+function renderStatsPage(stats: any, financeReport: any[]) {
+    
+    // Формируем строки таблицы
+    const reportRows = financeReport.map(r => {
+        // Красим "Чистый поток": Зеленый если +, Красный если -
+        const color = r.net >= 0 ? '#2e7d32' : '#c62828';
+        const sign = r.net > 0 ? '+' : '';
+
+        return `
+            <tr>
+                <td><b>${r.month}</b></td>
+                <td>${formatMoney(r.issued)} ₽</td>
+                <td>${formatMoney(r.repaid)} ₽</td>
+                <td style="color: ${color}; font-weight: bold;">
+                    ${sign}${formatMoney(r.net)} ₽
+                </td>
+            </tr>
+        `;
+    }).join('');
+
     return `
-        <!-- Карточки с цифрами -->
+        <!-- Блок 1: Карточки -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
             <div class="card" style="background: linear-gradient(135deg, #fff0f3 0%, #fff 100%); border-left: 5px solid var(--accent-rose);">
                 <h4 style="color: #666; margin-bottom: 10px;">Всего выдано (тело кредитов)</h4>
@@ -1524,11 +1557,34 @@ function renderStatsPage(stats: any) {
             </div>
         </div>
 
-        <!-- Блок с диаграммой -->
-        <div class="card">
-            <h3>Распределение кредитного портфеля</h3>
-            <div style="height: 400px; display: flex; justify-content: center;">
-                <canvas id="productsChart"></canvas>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            
+            <!-- Блок 2: Диаграмма -->
+            <div class="card">
+                <h3>Портфель продуктов</h3>
+                <div style="height: 300px; display: flex; justify-content: center;">
+                    <canvas id="productsChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Блок 3: Финансовая таблица (НОВОЕ) -->
+            <div class="card">
+                <h3>Финансовый поток (Cash Flow)</h3>
+                <div style="max-height: 300px; overflow-y: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Месяц</th>
+                                <th>Выдача</th>
+                                <th>Возврат</th>
+                                <th>Итог</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${reportRows.length ? reportRows : '<tr><td colspan="4" style="text-align:center; padding:20px; color:#999">Нет данных</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     `;

@@ -8,8 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Секретный ключ для подписи (в продакшене хранить в ENV!)
-var JWTKey = []byte("my_super_secret_key_rosebank")
+var JWTKey = []byte("secret_key")
 
 type Claims struct {
 	UserID int64  `json:"userId"`
@@ -17,7 +16,6 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Middleware для проверки токена
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -26,7 +24,6 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Формат: "Bearer <token>"
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid header format"})
@@ -45,7 +42,6 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Сохраняем данные пользователя в контекст запроса
 		c.Set("userId", claims.UserID)
 		c.Set("role", claims.Role)
 		c.Next()

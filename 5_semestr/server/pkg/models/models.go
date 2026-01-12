@@ -53,11 +53,11 @@ type Client struct {
 	ID             int64     `json:"id"`
 	FirstName      string    `json:"firstName"`
 	LastName       string    `json:"lastName"`
-	MiddleName     *string   `json:"middleName"` // Pointer for NULL handling
+	MiddleName     *string   `json:"middleName"` 
 	PassportSeries string    `json:"passportSeries"`
 	PassportNumber string    `json:"passportNumber"`
 	PassportIssued *string   `json:"passportIssuedBy"`
-	DateOfBirth    string    `json:"dateOfBirth"` // YYYY-MM-DD
+	DateOfBirth    string    `json:"dateOfBirth"` 
 	Address        string    `json:"address"`
 	Phone          string    `json:"phone"`
 	Email          *string   `json:"email"`
@@ -79,8 +79,8 @@ type LoanContract struct {
 	ID             int64     `json:"id"`
 	ContractNumber string    `json:"contractNumber"`
 	ClientID       int64     `json:"clientId"`
-	ClientName     string    `json:"clientName"` // Joined field
-	ProductName    string    `json:"productName"` // Joined field
+	ClientName     string    `json:"clientName"` 
+	ProductName    string    `json:"productName"` 
 	Amount         float64   `json:"amount"`
 	InterestRate   float64   `json:"interestRate"`
 	TermMonths     int       `json:"termMonths"`

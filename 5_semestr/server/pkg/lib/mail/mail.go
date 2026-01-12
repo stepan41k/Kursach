@@ -11,15 +11,14 @@ import (
 func SendLoginEmail(toEmail string, userName string, ip string) {
 	host := os.Getenv("SMTP_HOST")
 	port := os.Getenv("SMTP_PORT")
-	user := os.Getenv("SMTP_USER") // Чистый email
+	user := os.Getenv("SMTP_USER")
 	pass := os.Getenv("SMTP_PASS")
-	from := os.Getenv("SMTP_FROM") // Красивое имя
+	from := os.Getenv("SMTP_FROM")
 
 	if host == "" || toEmail == "" {
 		return
 	}
 
-	// Заголовки
 	headers := fmt.Sprintf("From: %s\r\n", from) +
 		fmt.Sprintf("To: %s\r\n", toEmail) +
 		"Subject: Оповещение о входе в RoseBank\r\n" +
@@ -34,7 +33,6 @@ func SendLoginEmail(toEmail string, userName string, ip string) {
 	auth := smtp.PlainAuth("", user, pass, host)
 	addr := fmt.Sprintf("%s:%s", host, port)
 	
-	// ИСПРАВЛЕНИЕ ЗДЕСЬ: используем 'user' вместо 'from'
 	err := smtp.SendMail(addr, auth, user, []string{toEmail}, msg)
 
 	if err != nil {
@@ -48,17 +46,15 @@ func SendLoginEmail(toEmail string, userName string, ip string) {
 func SendClientWelcomeEmail(toEmail string, fullName string, login string, password string) {
 	host := os.Getenv("SMTP_HOST")
 	port := os.Getenv("SMTP_PORT")
-	user := os.Getenv("SMTP_USER") // Чистый email (для авторизации и конверта)
+	user := os.Getenv("SMTP_USER") 
 	pass := os.Getenv("SMTP_PASS")
-	from := os.Getenv("SMTP_FROM") // Красивое имя (для заголовка письма)
+	from := os.Getenv("SMTP_FROM")
 
 	if host == "" || toEmail == "" {
 		log.Println("SMTP not configured or email empty")
 		return
 	}
 
-	// Заголовки письма (Headers)
-	// Важно: заголовки отделяются от тела пустой строкой (\r\n)
 	headers := fmt.Sprintf("From: %s\r\n", from) +
 		fmt.Sprintf("To: %s\r\n", toEmail) +
 		"Subject: Добро пожаловать в RoseBank!\r\n" +
@@ -79,8 +75,6 @@ func SendClientWelcomeEmail(toEmail string, fullName string, login string, passw
 	addr := fmt.Sprintf("%s:%s", host, port)
 	auth := smtp.PlainAuth("", user, pass, host)
 
-	// ИСПРАВЛЕНИЕ ЗДЕСЬ:
-	// 3-й аргумент - это 'user' (чистый email), а не 'from'
 	err := smtp.SendMail(addr, auth, user, []string{toEmail}, msg)
 	
 	if err != nil {

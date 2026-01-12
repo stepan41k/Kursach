@@ -31,7 +31,6 @@ func initDB() (*pgxpool.Pool) {
 		log.Fatal("Unable to connect to database:", err)
 	}
 
-	// Проверка связи
 	if err := db.Ping(context.Background()); err != nil {
 		log.Fatal("Database ping failed:", err)
 	}
@@ -52,7 +51,7 @@ func main() {
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-			AllowOrigins:     []string{"http://localhost:3010"}, // Разрешаем всем (или укажите "http://localhost:3010")
+			AllowOrigins:     []string{"http://localhost:3010"},
 			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 			AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 			ExposeHeaders:    []string{"Content-Length"},
@@ -68,26 +67,27 @@ func main() {
 		protected.Use(auth.AuthMiddleware())
 		{
 			protected.POST("/register", driver.RegisterHandler)
+
 			protected.GET("/clients", driver.GetClients)
 			protected.POST("/clients", driver.CreateClient)
+
 			protected.GET("/products", driver.GetProducts)
 			protected.POST("/loans", driver.IssueLoan)
 			protected.GET("/loans", driver.GetLoans)
 			protected.GET("/loans/:id/schedule", driver.GetSchedule)
-			protected.GET("/employees", driver.GetEmployeesHandler)
-			protected.GET("/logs", driver.GetLogsHandler)
-
-			protected.POST("/backup", driver.CreateBackupHandler)
-
-    		protected.GET("/my-loans", driver.GetMyLoansHandler)
+			protected.GET("/loans/:id/operations", driver.GetLoanOperationsHandler)
+			protected.GET("/my-loans", driver.GetMyLoansHandler)
 
 			protected.POST("/pay", driver.MakePaymentHandler)
-
 			protected.POST("/repay-early", driver.EarlyRepaymentHandler)
 
-			protected.GET("/loans/:id/operations", driver.GetLoanOperationsHandler)
-
+			protected.GET("/employees", driver.GetEmployeesHandler)
+			
+			protected.GET("/logs", driver.GetLogsHandler)
 			protected.GET("/stats", driver.GetStatsHandler)
+			protected.GET("/finance-report", driver.GetFinanceReportHandler)
+
+			protected.POST("/backup", driver.CreateBackupHandler)
 		}
 		
 	}
