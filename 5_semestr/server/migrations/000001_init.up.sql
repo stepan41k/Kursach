@@ -53,8 +53,8 @@ CREATE TABLE clients (
 CREATE TABLE credit_products (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
-    min_amount NUMERIC(15, 2) NOT NULL,
-    max_amount NUMERIC(15, 2) NOT NULL,
+    min_amount BIGINT NOT NULL,
+    max_amount BIGINT NOT NULL,
     min_term_months INT NOT NULL,
     max_term_months INT NOT NULL,
     interest_rate NUMERIC(5, 2) NOT NULL,
@@ -67,8 +67,8 @@ CREATE TABLE loan_contracts (
     client_id BIGINT NOT NULL REFERENCES clients(id),
     product_id INT NOT NULL REFERENCES credit_products(id),
     approved_by_employee_id BIGINT REFERENCES employees(id),
-    balance NUMERIC(15, 2) NOT NULL,
-    amount NUMERIC(15, 2) NOT NULL,
+    balance BIGINT NOT NULL,
+    amount BIGINT NOT NULL,
     interest_rate NUMERIC(5, 2) NOT NULL,
     term_months INT NOT NULL,
     start_date DATE NOT NULL,
@@ -82,10 +82,10 @@ CREATE TABLE repayment_schedule (
     id BIGSERIAL PRIMARY KEY,
     contract_id BIGINT NOT NULL REFERENCES loan_contracts(id) ON DELETE CASCADE,
     payment_date DATE NOT NULL,
-    payment_amount NUMERIC(15, 2) NOT NULL,
-    principal_amount NUMERIC(15, 2) NOT NULL,
-    interest_amount NUMERIC(15, 2) NOT NULL,
-    remaining_balance NUMERIC(15, 2) NOT NULL,
+    payment_amount BIGINT NOT NULL,
+    principal_amount BIGINT NOT NULL,
+    interest_amount BIGINT NOT NULL,
+    remaining_balance BIGINT NOT NULL,
     is_paid BOOLEAN DEFAULT FALSE,
     paid_at TIMESTAMPTZ
 );
@@ -95,7 +95,7 @@ CREATE TABLE operations (
     contract_id BIGINT NOT NULL REFERENCES loan_contracts(id),
     employee_id BIGINT REFERENCES employees(id),
     operation_type operation_type NOT NULL,
-    amount NUMERIC(15, 2) NOT NULL,
+    amount BIGINT NOT NULL,
     operation_date TIMESTAMPTZ DEFAULT NOW(),
     description TEXT
 );
@@ -121,13 +121,13 @@ CREATE INDEX idx_audit_user ON audit_logs(user_id);
 
 INSERT INTO credit_products (name, min_amount, max_amount, min_term_months, max_term_months, interest_rate, is_active)
 VALUES 
-('Потребительский "Легкий"', 10000, 500000, 3, 36, 18.5, true),
-('Автокредит "Драйв"', 300000, 5000000, 12, 60, 12.0, true),
-('Потребительский "На любые цели"', 30000, 5000000, 3, 60, 18.9, true),
-('Ипотека "Семейная"', 1000000, 50000000, 120, 360, 6.0, true),
-('Автокредит "Движение"', 500000, 10000000, 12, 84, 13.5, true),
-('Кредитная карта "100 дней"', 10000, 300000, 12, 24, 29.9, true),
-('Рефинансирование', 300000, 3000000, 12, 60, 15.0, true)
+('Потребительский "Легкий"', 1000000, 50000000, 6, 72, 18.5, true),
+('Автокредит "Драйв"', 30000000, 500000000, 12, 84, 12.0, true),
+('Потребительский "На любые цели"', 3000000, 500000000, 3, 120, 18.9, true),
+('Ипотека "Семейная"', 100000000, 5000000000, 120, 360, 6.0, true),
+('Автокредит "Движение"', 50000000, 1000000000, 12, 168, 13.5, true),
+('Кредитная карта "100 дней"', 1000000, 30000000, 12, 36, 29.9, true),
+('Рефинансирование', 30000000, 300000000, 12, 96, 15.0, true)
 ON CONFLICT DO NOTHING;
 
 
@@ -144,7 +144,7 @@ SELECT id, 'Иван', 'Иванов', 'Старший менеджер' FROM us
 ON CONFLICT DO NOTHING;
 
 INSERT INTO employees (user_id, first_name, last_name, position)
-SELECT id, 'Сергей', 'Админов', 'Администратор' FROM users WHERE login = 'admin'
+SELECT id, 'Сергей', 'Петров', 'Администратор' FROM users WHERE login = 'admin'
 ON CONFLICT DO NOTHING;
 
 
@@ -408,22 +408,22 @@ EXECUTE FUNCTION check_client_creditworthiness();
 
 
 CREATE OR REPLACE FUNCTION fn_calculate_annuity(
-    p_amount NUMERIC, 
+    p_amount_kopecks BIGINT, 
     p_rate NUMERIC, 
     p_months INT
-) RETURNS NUMERIC AS $$
+) RETURNS BIGINT AS $$
 DECLARE
     v_monthly_rate NUMERIC;
     v_factor NUMERIC;
     v_annuity NUMERIC;
 BEGIN
     v_monthly_rate := p_rate / 12 / 100;
-
     v_factor := POW(1 + v_monthly_rate, p_months);
     
-    v_annuity := p_amount * (v_monthly_rate * v_factor) / (v_factor - 1);
+    -- Считаем в точности, результат округляем до целого (копейки)
+    v_annuity := p_amount_kopecks * (v_monthly_rate * v_factor) / (v_factor - 1);
     
-    RETURN ROUND(v_annuity, 2);
+    RETURN ROUND(v_annuity)::BIGINT;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -431,49 +431,44 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE PROCEDURE sp_issue_loan(
     p_client_id BIGINT,
     p_product_id INT,
-    p_amount NUMERIC,
+    p_amount BIGINT, 
     p_term_months INT,
-    p_employee_id BIGINT
+    p_employee_id BIGINT,
+    INOUT p_new_id BIGINT DEFAULT NULL
 )
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_contract_id BIGINT;
     v_rate NUMERIC;
-    v_annuity NUMERIC;
-    v_balance NUMERIC;
+    v_annuity BIGINT;
+    v_balance BIGINT;
     v_monthly_rate NUMERIC;
-    v_interest_part NUMERIC;
-    v_principal_part NUMERIC;
+    v_interest_part BIGINT;
+    v_principal_part BIGINT;
     v_current_date DATE := CURRENT_DATE;
     i INT;
 BEGIN
     SELECT interest_rate INTO v_rate FROM credit_products WHERE id = p_product_id;
     
-    IF v_rate IS NULL THEN
-        RAISE EXCEPTION 'Кредитный продукт не найден';
-    END IF;
-
-    v_annuity := fn_calculate_annuity(p_amount, v_rate, p_term_months);
     v_monthly_rate := v_rate / 12 / 100;
+    v_annuity := fn_calculate_annuity(p_amount, v_rate, p_term_months);
     v_balance := p_amount;
 
     INSERT INTO loan_contracts (
         contract_number, client_id, product_id, approved_by_employee_id, 
         amount, interest_rate, term_months, start_date, end_date, status, balance
     ) VALUES (
-        'LN-' || CAST(EXTRACT(EPOCH FROM NOW()) AS BIGINT),
+        'LN-' || CAST(EXTRACT(EPOCH FROM NOW()) AS BIGINT) || '-' || p_client_id,
         p_client_id, p_product_id, p_employee_id,
         p_amount, v_rate, p_term_months, v_current_date, 
         v_current_date + (p_term_months || ' months')::INTERVAL, 
         'active', p_amount
-    ) RETURNING id INTO v_contract_id;
+    ) RETURNING id INTO p_new_id;
 
     FOR i IN 1..p_term_months LOOP
         v_current_date := v_current_date + INTERVAL '1 month';
         
-        v_interest_part := ROUND(v_balance * v_monthly_rate, 2);
-        
+        v_interest_part := ROUND(v_balance * v_monthly_rate)::BIGINT;
         v_principal_part := v_annuity - v_interest_part;
 
         IF i = p_term_months OR v_principal_part > v_balance THEN
@@ -487,14 +482,13 @@ BEGIN
             contract_id, payment_date, payment_amount, 
             principal_amount, interest_amount, remaining_balance, is_paid
         ) VALUES (
-            v_contract_id, v_current_date, v_annuity, 
+            p_new_id, v_current_date, v_annuity, 
             v_principal_part, v_interest_part, v_balance, FALSE
         );
     END LOOP;
 
     INSERT INTO operations (contract_id, employee_id, operation_type, amount, description)
-    VALUES (v_contract_id, p_employee_id, 'issue', p_amount, 'Выдача кредита через процедуру БД');
-
+    VALUES (p_new_id, p_employee_id, 'issue', p_amount, 'Выдача (копейки)');
 END;
 $$;
 
@@ -545,127 +539,32 @@ END;
 $$;
 
 
-CREATE OR REPLACE PROCEDURE sp_issue_loan(
-    p_client_id BIGINT,
-    p_product_id INT,
-    p_amount NUMERIC,
-    p_term_months INT,
-    p_employee_id BIGINT,
-    INOUT p_new_id BIGINT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_rate NUMERIC;
-    v_annuity NUMERIC;
-    v_balance NUMERIC;
-    v_monthly_rate NUMERIC;
-    v_interest_part NUMERIC;
-    v_principal_part NUMERIC;
-    v_current_date DATE := CURRENT_DATE;
-    i INT;
-BEGIN
-    SELECT interest_rate INTO v_rate FROM credit_products WHERE id = p_product_id;
-    
-    IF v_rate IS NULL THEN
-        RAISE EXCEPTION 'Кредитный продукт не найден';
-    END IF;
-
-    v_monthly_rate := v_rate / 12 / 100;
-    IF v_monthly_rate = 0 THEN
-        v_annuity := p_amount / p_term_months;
-    ELSE
-        v_annuity := p_amount * (v_monthly_rate * POW(1 + v_monthly_rate, p_term_months)) / (POW(1 + v_monthly_rate, p_term_months) - 1);
-    END IF;
-    
-    v_annuity := ROUND(v_annuity, 2);
-    v_balance := p_amount;
-
-    INSERT INTO loan_contracts (
-        contract_number, client_id, product_id, approved_by_employee_id, 
-        amount, interest_rate, term_months, start_date, end_date, status, balance
-    ) VALUES (
-        'LN-' || CAST(EXTRACT(EPOCH FROM NOW()) AS BIGINT) || '-' || p_client_id,
-        p_client_id, p_product_id, p_employee_id,
-        p_amount, v_rate, p_term_months, v_current_date, 
-        v_current_date + (p_term_months || ' months')::INTERVAL, 
-        'active', p_amount
-    ) RETURNING id INTO p_new_id;
-
-    FOR i IN 1..p_term_months LOOP
-        v_current_date := v_current_date + INTERVAL '1 month';
-        v_interest_part := ROUND(v_balance * v_monthly_rate, 2);
-        v_principal_part := v_annuity - v_interest_part;
-
-        IF i = p_term_months OR v_principal_part > v_balance THEN
-            v_principal_part := v_balance;
-            v_annuity := v_principal_part + v_interest_part;
-        END IF;
-
-        v_balance := v_balance - v_principal_part;
-
-        INSERT INTO repayment_schedule (
-            contract_id, payment_date, payment_amount, 
-            principal_amount, interest_amount, remaining_balance, is_paid
-        ) VALUES (
-            p_new_id, v_current_date, v_annuity, 
-            v_principal_part, v_interest_part, v_balance, FALSE
-        );
-    END LOOP;
-
-    INSERT INTO operations (contract_id, employee_id, operation_type, amount, description)
-    VALUES (p_new_id, p_employee_id, 'issue', p_amount, '');
-END;
-$$;
-
-
 -- EarlyRepayement
 CREATE OR REPLACE PROCEDURE sp_early_repayment(
     p_contract_id BIGINT,
     p_user_id BIGINT,
-    INOUT p_paid_amount NUMERIC DEFAULT 0
+    INOUT p_paid_amount BIGINT DEFAULT 0
 )
-LANGUAGE plpgsql
-AS $$
+LANGUAGE plpgsql AS $$
 DECLARE
-    v_balance NUMERIC;
+    v_balance BIGINT;
     v_status VARCHAR;
     v_owner_id BIGINT;
 BEGIN
     SELECT lc.balance, lc.status, cl.user_id 
     INTO v_balance, v_status, v_owner_id
-    FROM loan_contracts lc
-    JOIN clients cl ON lc.client_id = cl.id
+    FROM loan_contracts lc JOIN clients cl ON lc.client_id = cl.id
     WHERE lc.id = p_contract_id;
 
-    IF v_balance IS NULL THEN
-        RAISE EXCEPTION 'Договор не найден';
-    END IF;
-
-    IF v_owner_id != p_user_id THEN
-        RAISE EXCEPTION 'Доступ запрещен: это не ваш кредит';
-    END IF;
-
-    IF v_status = 'closed' THEN
-        RAISE EXCEPTION 'Кредит уже закрыт';
-    END IF;
-
-    IF v_balance <= 0 THEN
-        RAISE EXCEPTION 'Задолженность отсутствует';
-    END IF;
+    IF v_balance <= 0 THEN RAISE EXCEPTION 'Нет долга'; END IF;
 
     p_paid_amount := v_balance;
 
-    UPDATE loan_contracts 
-    SET balance = 0, status = 'closed', closed_at = NOW() 
-    WHERE id = p_contract_id;
-
-    DELETE FROM repayment_schedule 
-    WHERE contract_id = p_contract_id AND is_paid = FALSE;
-
+    UPDATE loan_contracts SET balance = 0, status = 'closed', closed_at = NOW() WHERE id = p_contract_id;
+    DELETE FROM repayment_schedule WHERE contract_id = p_contract_id AND is_paid = FALSE;
+    
     INSERT INTO operations (contract_id, operation_type, amount, description, operation_date)
-    VALUES (p_contract_id, 'early_repayment', v_balance, 'Полное досрочное погашение (SP)', NOW());
-
+    VALUES (p_contract_id, 'early_repayment', v_balance, 'Полное погашение', NOW());
 END;
 $$;
 
@@ -675,10 +574,10 @@ CREATE OR REPLACE FUNCTION fn_get_client_loans(p_user_id BIGINT)
 RETURNS TABLE (
     id BIGINT,
     contract_number VARCHAR,
-    amount NUMERIC,
+    amount BIGINT,        
     status VARCHAR,
     start_date DATE,
-    balance NUMERIC,
+    balance BIGINT,       
     product_name VARCHAR,
     paid_months BIGINT,
     total_months BIGINT
@@ -686,9 +585,7 @@ RETURNS TABLE (
 DECLARE
     v_client_id BIGINT;
 BEGIN
-    SELECT c.id INTO v_client_id 
-    FROM clients c 
-    WHERE c.user_id = p_user_id;
+    SELECT c.id INTO v_client_id FROM clients c WHERE c.user_id = p_user_id;
 
     RETURN QUERY
     SELECT 
@@ -759,12 +656,12 @@ CREATE OR REPLACE FUNCTION fn_get_all_loans()
 RETURNS TABLE (
     id BIGINT,
     contract_number VARCHAR,
-    amount NUMERIC,
+    amount BIGINT,     
     status VARCHAR,
     start_date DATE,
     interest_rate NUMERIC,
     term_months INT,
-    balance NUMERIC,
+    balance BIGINT,      
     client_name TEXT,
     product_name VARCHAR
 ) AS $$
@@ -785,7 +682,6 @@ BEGIN
     ORDER BY vd.created_at DESC;
 END;
 $$ LANGUAGE plpgsql;
-
 
 -- CreateClient
 CREATE OR REPLACE PROCEDURE sp_create_client(
@@ -873,8 +769,7 @@ SELECT
     lc.created_at,
     cp.name AS product_name,
     COUNT(rs.id) AS total_payments,
-    COUNT(rs.id) FILTER (WHERE rs.is_paid = TRUE) AS paid_payments,
-    COALESCE(SUM(rs.payment_amount) FILTER (WHERE rs.is_paid = TRUE), 0) AS total_paid_money
+    COUNT(rs.id) FILTER (WHERE rs.is_paid = TRUE) AS paid_payments
 FROM loan_contracts lc
 JOIN credit_products cp ON lc.product_id = cp.id
 LEFT JOIN repayment_schedule rs ON lc.id = rs.contract_id
@@ -910,7 +805,7 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION fn_get_loan_operations(p_contract_id BIGINT)
 RETURNS TABLE (
     operation_type VARCHAR,
-    amount NUMERIC,
+    amount BIGINT,          
     operation_date TIMESTAMPTZ,
     description TEXT
 ) AS $$
@@ -933,22 +828,16 @@ CREATE OR REPLACE FUNCTION fn_get_repayment_schedule(p_contract_id BIGINT)
 RETURNS TABLE (
     id BIGINT,
     payment_date DATE,
-    payment_amount NUMERIC,
-    principal_amount NUMERIC,
-    interest_amount NUMERIC,
-    remaining_balance NUMERIC,
+    payment_amount BIGINT,   
+    principal_amount BIGINT,  
+    interest_amount BIGINT,   
+    remaining_balance BIGINT, 
     is_paid BOOLEAN
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT 
-        rs.id,
-        rs.payment_date,
-        rs.payment_amount,
-        rs.principal_amount,
-        rs.interest_amount,
-        rs.remaining_balance,
-        rs.is_paid
+    SELECT rs.id, rs.payment_date, rs.payment_amount, rs.principal_amount, 
+           rs.interest_amount, rs.remaining_balance, rs.is_paid
     FROM repayment_schedule rs
     WHERE rs.contract_id = p_contract_id
     ORDER BY rs.payment_date ASC;
@@ -1008,8 +897,8 @@ CREATE OR REPLACE FUNCTION fn_get_active_products()
 RETURNS TABLE (
     id INT,
     name VARCHAR,
-    min_amount NUMERIC,
-    max_amount NUMERIC,
+    min_amount BIGINT,
+    max_amount BIGINT,
     min_term_months INT,
     max_term_months INT,
     interest_rate NUMERIC,
@@ -1143,17 +1032,17 @@ LEFT JOIN employees e ON lc.approved_by_employee_id = e.user_id;
 CREATE OR REPLACE FUNCTION fn_get_financial_report()
 RETURNS TABLE (
     month_year TEXT,
-    total_issued NUMERIC,
-    total_repaid NUMERIC,
-    net_cash_flow NUMERIC
+    total_issued BIGINT,
+    total_repaid BIGINT,
+    net_cash_flow BIGINT
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT 
         v.month_year,
-        v.total_issued,
-        v.total_repaid,
-        v.net_cash_flow
+        v.total_issued::BIGINT,
+        v.total_repaid::BIGINT,
+        v.net_cash_flow::BIGINT
     FROM v_monthly_financials v;
 END;
 $$ LANGUAGE plpgsql;
@@ -1161,27 +1050,14 @@ $$ LANGUAGE plpgsql;
 
 CREATE MATERIALIZED VIEW mv_dashboard_cache AS
 WITH 
-    issued AS (
-        SELECT COALESCE(SUM(amount), 0) AS total 
-        FROM loan_contracts 
-        WHERE status != 'draft'
-    ),
-    repaid AS (
-        SELECT COALESCE(SUM(amount), 0) AS total 
-        FROM operations 
-        WHERE operation_type IN ('scheduled_payment', 'early_repayment')
-    ),
+    issued AS (SELECT COALESCE(SUM(amount), 0) AS total FROM loan_contracts WHERE status != 'draft'),
+    repaid AS (SELECT COALESCE(SUM(amount), 0) AS total FROM operations WHERE operation_type IN ('scheduled_payment', 'early_repayment')),
     dist AS (
         SELECT json_agg(row_to_json(t)) AS data FROM (
-            SELECT cp.name AS "label", COUNT(lc.id) AS "value"
-            FROM loan_contracts lc
-            JOIN credit_products cp ON lc.product_id = cp.id
-            GROUP BY cp.name
+            SELECT cp.name AS "label", COUNT(lc.id) AS "value" FROM loan_contracts lc JOIN credit_products cp ON lc.product_id = cp.id GROUP BY cp.name
         ) t
     )
-SELECT 
-    1 AS id,
-    json_build_object(
+SELECT 1 AS id, json_build_object(
         'totalIssued', (SELECT total FROM issued),
         'totalRepaid', (SELECT total FROM repaid),
         'distribution', COALESCE((SELECT data FROM dist), '[]'::json)

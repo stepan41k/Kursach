@@ -198,12 +198,16 @@ class ApiService {
 		return this.request(`/logs?${params}`) || []
 	}
 
-	calculatePreview(amount: number, rate: number, months: number) {
+	calculatePreview(amountRub: number, rate: number, months: number) {
 		const monthlyRate = rate / 12 / 100
 		const annuity =
-			(amount * (monthlyRate * Math.pow(1 + monthlyRate, months))) /
+			(amountRub * (monthlyRate * Math.pow(1 + monthlyRate, months))) /
 			(Math.pow(1 + monthlyRate, months) - 1)
-		return { monthlyPayment: annuity, totalInterest: annuity * months - amount }
+
+		return {
+			monthlyPayment: annuity,
+			totalInterest: annuity * months - amountRub,
+		}
 	}
 }
 
@@ -742,12 +746,14 @@ window.showAddClientForm = () => {
             </div>
             
             <div class="form-group" style="margin-bottom: 15px;">
-                <label>Кем выдан</label>
+                <label>Кем выдан *</label>
                 <input id="pi">
+				<small id="err-pi" class="error-message"></small>
             </div>
             <div class="form-group" style="margin-bottom: 25px;">
-                <label>Адрес</label>
+                <label>Адрес *</label>
                 <input id="addr">
+				<small id="err-addr" class="error-message"></small>
             </div>
             
             <div style="margin-top: 20px; display: flex; gap: 15px;">
@@ -797,6 +803,20 @@ window.submitNewClient = async () => {
 			v => REGEX.PHONE.test(v),
 			'err-ph',
 			'Некорректный номер телефона'
+		) && isValid
+	isValid =
+		validateField(
+			'pi',
+			v => REGEX.PI.test(v),
+			'err-pi',
+			'Заполните поле (мин. 5 символов)'
+		) && isValid
+	isValid =
+		validateField(
+			'addr',
+			v => REGEX.ADDRESS.test(v),
+			'err-addr',
+			'Введите адрес проживания'
 		) && isValid
 	// const phVal = (document.getElementById('ph') as HTMLInputElement).value
 	// if (phVal) {
@@ -853,6 +873,8 @@ const REGEX = {
 	PASSPORT_SERIES: /^\d{4}$/,
 	PASSPORT_NUMBER: /^\d{6}$/,
 	PHONE: /^[+]?[\d\s()-]{10,}$/,
+	PI: /^.{5,}$/, 
+	ADDRESS: /^.{5,}$/,
 	MIN_2: (val: string) => val.length >= 2,
 	MIN_4: (val: string) => val.length >= 4,
 	MIN_6: (val: string) => val.length >= 6,
@@ -1429,7 +1451,7 @@ function formatMoney(amount: number): string {
 	return amount.toLocaleString('ru-RU', {
 		minimumFractionDigits: 2,
 		maximumFractionDigits: 2,
-		useGrouping: true, 
+		useGrouping: true,
 	})
 }
 
@@ -1476,14 +1498,14 @@ function renderStatsPage(stats: any, financeReport: any[]) {
             <div class="card" style="background: linear-gradient(135deg, #fff0f3 0%, #fff 100%); border-left: 5px solid var(--accent-rose);">
                 <h4 style="color: #666; margin-bottom: 10px;">Всего выдано (тело кредитов)</h4>
                 <div style="font-size: 1.8em; font-weight: bold; color: var(--accent-rose);">
-                    ${formatMoney(stats.totalIssued)} ₽
+                    ${formatMoney(stats.totalIssued / 100)} ₽
                 </div>
             </div>
             
             <div class="card" style="background: linear-gradient(135deg, #e8f5e9 0%, #fff 100%); border-left: 5px solid #2e7d32;">
                 <h4 style="color: #666; margin-bottom: 10px;">Всего возвращено (платежи)</h4>
                 <div style="font-size: 1.8em; font-weight: bold; color: #2e7d32;">
-                    ${formatMoney(stats.totalRepaid)} ₽
+                    ${formatMoney(stats.totalRepaid / 100)} ₽
                 </div>
             </div>
         </div>

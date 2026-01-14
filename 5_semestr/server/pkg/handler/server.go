@@ -10,8 +10,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/backup"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/auth"
+	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/backup"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/mail"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/lib/password"
 	"github.com/stepan41k/Kursach/5_semestr/pkg/models"
@@ -45,11 +45,11 @@ func (h *HandlerDriver) RegisterHandler(c *gin.Context) {
 	var newUserID int64
 
 	err = tx.QueryRow(ctx, "CALL sp_register_employee($1, $2, $3, $4, $5, $6, NULL)",
-		req.Login, 
-		req.Password, 
-		req.FirstName, 
-		req.LastName, 
-		req.Position, 
+		req.Login,
+		req.Password,
+		req.FirstName,
+		req.LastName,
+		req.Position,
 		req.Email,
 	).Scan(&newUserID)
 
@@ -59,9 +59,9 @@ func (h *HandlerDriver) RegisterHandler(c *gin.Context) {
 	}
 
 	adminID, _ := c.Get("userId")
-	
+
 	LogAction(ctx, tx, adminID.(int64), "REGISTER_EMPLOYEE", "employees", newUserID, map[string]string{
-		"role": req.Position,
+		"role":  req.Position,
 		"login": req.Login,
 		"name":  fmt.Sprintf("%s %s", req.FirstName, req.LastName),
 		"email": req.Email,
@@ -74,7 +74,6 @@ func (h *HandlerDriver) RegisterHandler(c *gin.Context) {
 
 	c.JSON(201, gin.H{"message": "Сотрудник успешно зарегистрирован"})
 }
-
 
 func (h *HandlerDriver) LoginHandler(c *gin.Context) {
 	var req models.LoginRequest
@@ -100,10 +99,10 @@ func (h *HandlerDriver) LoginHandler(c *gin.Context) {
 		return
 	}
 
-    expirationTime := time.Now().Add(24 * time.Hour)
+	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &auth.Claims{
-		UserID: userID,
-		Role:   roleName,
+		UserID:           userID,
+		Role:             roleName,
 		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -127,7 +126,6 @@ func (h *HandlerDriver) LoginHandler(c *gin.Context) {
 		}{userID, roleName, fullName},
 	})
 }
-
 
 func (h *HandlerDriver) GetClients(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), "SELECT * FROM fn_get_all_clients()")
@@ -154,15 +152,16 @@ func (h *HandlerDriver) GetClients(c *gin.Context) {
 			"id": id, "firstName": fn, "lastName": ln, "middleName": mn,
 			"passportSeries": ps, "passportNumber": pn, "passportIssuedBy": pi,
 			"dateOfBirth": dob.Format("2006-01-02"),
-			"address": addr, "phone": ph, "email": em,
+			"address":     addr, "phone": ph, "email": em,
 			"createdAt": createdAt,
 		})
 	}
-	
-	if clients == nil { clients = []gin.H{} }
+
+	if clients == nil {
+		clients = []gin.H{}
+	}
 	c.JSON(200, clients)
 }
-
 
 func (h *HandlerDriver) CreateClient(c *gin.Context) {
 	var req models.CreateClientRequest
@@ -173,7 +172,6 @@ func (h *HandlerDriver) CreateClient(c *gin.Context) {
 
 	genLogin := password.GenerateRandomPassword(8)
 	genPassword := password.GenerateRandomPassword(8)
-	
 
 	ctx := c.Request.Context()
 	tx, err := h.db.Begin(ctx)
@@ -199,11 +197,13 @@ func (h *HandlerDriver) CreateClient(c *gin.Context) {
 
 	opID, _ := c.Get("userId")
 	adminID := int64(0)
-	if opID != nil { adminID = opID.(int64) }
+	if opID != nil {
+		adminID = opID.(int64)
+	}
 
 	LogAction(ctx, tx, adminID, "CREATE_CLIENT", "clients", clientID, map[string]string{
 		"login": genLogin,
-		"name": fmt.Sprintf("%s %s", req.LastName, req.FirstName),
+		"name":  fmt.Sprintf("%s %s", req.LastName, req.FirstName),
 	})
 
 	if err := tx.Commit(ctx); err != nil {
@@ -212,15 +212,14 @@ func (h *HandlerDriver) CreateClient(c *gin.Context) {
 	}
 
 	go mail.SendClientWelcomeEmail(
-		req.Email, 
-		fmt.Sprintf("%s %s", req.FirstName, req.LastName), 
-		genLogin, 
+		req.Email,
+		fmt.Sprintf("%s %s", req.FirstName, req.LastName),
+		genLogin,
 		genPassword,
 	)
 
 	c.JSON(201, gin.H{"message": "Client created", "id": clientID})
 }
-
 
 func (h *HandlerDriver) GetProducts(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), "SELECT * FROM fn_get_active_products()")
@@ -234,26 +233,29 @@ func (h *HandlerDriver) GetProducts(c *gin.Context) {
 	for rows.Next() {
 		var id, minTerm, maxTerm int
 		var name string
-		var minAmt, maxAmt, rate float64
+		var minAmt, maxAmt int64
+		var rate float64
 		var isActive bool
 
 		err := rows.Scan(&id, &name, &minAmt, &maxAmt, &minTerm, &maxTerm, &rate, &isActive)
 		if err != nil {
 			continue
 		}
-		
+
 		products = append(products, gin.H{
-			"id": id, "name": name, 
-			"minAmount": minAmt, "maxAmount": maxAmt,
-			"minTerm": minTerm, "maxTerm": maxTerm,
+			"id": id, "name": name,
+			"minAmount": float64(minAmt) / 100.0,
+			"maxAmount": float64(maxAmt) / 100.0,
+			"minTerm":   minTerm, "maxTerm": maxTerm,
 			"rate": rate, "isActive": isActive,
 		})
 	}
-	
-	if products == nil { products = []gin.H{} }
+
+	if products == nil {
+		products = []gin.H{}
+	}
 	c.JSON(200, products)
 }
-
 
 func (h *HandlerDriver) IssueLoan(c *gin.Context) {
 	var req models.IssueLoanRequest
@@ -271,11 +273,12 @@ func (h *HandlerDriver) IssueLoan(c *gin.Context) {
 	defer tx.Rollback(ctx)
 
 	var newContractID int64
+	amountKopecks := int64(req.Amount * 100)
 
 	err = tx.QueryRow(ctx, "CALL sp_issue_loan($1, $2, $3, $4, $5, NULL)",
 		req.ClientID,
 		req.ProductID,
-		req.Amount,
+		amountKopecks,
 		req.TermMonths,
 		req.EmployeeID,
 	).Scan(&newContractID)
@@ -299,7 +302,6 @@ func (h *HandlerDriver) IssueLoan(c *gin.Context) {
 	c.JSON(201, gin.H{"message": "Loan issued", "contractId": newContractID})
 }
 
-
 func (h *HandlerDriver) GetLoans(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), "SELECT * FROM fn_get_all_loans()")
 	if err != nil {
@@ -312,7 +314,8 @@ func (h *HandlerDriver) GetLoans(c *gin.Context) {
 	for rows.Next() {
 		var id int64
 		var contractNum, status, clientName, prodName string
-		var amount, rate, balance float64
+		var amount, balance int64
+		var rate float64
 		var startDate time.Time
 		var term int
 
@@ -320,25 +323,26 @@ func (h *HandlerDriver) GetLoans(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		
+
 		loans = append(loans, gin.H{
-			"id": id, 
-			"contractNumber": contractNum, 
-			"amount": amount, 
-			"status": status, 
-			"startDate": startDate,
-			"clientName": clientName,
-			"productName": prodName,
-			"interestRate": rate,
-			"termMonths": term,
-			"balance": balance,
+			"id":             id,
+			"contractNumber": contractNum,
+			"amount":         float64(amount) / 100.0,
+			"status":         status,
+			"startDate":      startDate,
+			"clientName":     clientName,
+			"productName":    prodName,
+			"interestRate":   rate,
+			"termMonths":     term,
+			"balance":        float64(balance) / 100.0,
 		})
 	}
-	
-	if loans == nil { loans = []gin.H{} }
+
+	if loans == nil {
+		loans = []gin.H{}
+	}
 	c.JSON(200, loans)
 }
-
 
 func (h *HandlerDriver) GetSchedule(c *gin.Context) {
 	contractID := c.Param("id")
@@ -354,7 +358,7 @@ func (h *HandlerDriver) GetSchedule(c *gin.Context) {
 	for rows.Next() {
 		var id int64
 		var paymentDate time.Time
-		var paymentAmount, principal, interest, balance float64
+		var paymentAmount, principal, interest, balance int64
 		var isPaid bool
 
 		if err := rows.Scan(&id, &paymentDate, &paymentAmount, &principal, &interest, &balance, &isPaid); err != nil {
@@ -364,18 +368,19 @@ func (h *HandlerDriver) GetSchedule(c *gin.Context) {
 		schedule = append(schedule, gin.H{
 			"id":               id,
 			"paymentDate":      paymentDate,
-			"paymentAmount":    paymentAmount,
-			"principal":        principal,
-			"interest":         interest,
-			"remainingBalance": balance,
+			"paymentAmount":    float64(paymentAmount) / 100.0,
+			"principal":        float64(principal) / 100.0,
+			"interest":         float64(interest) / 100.0,
+			"remainingBalance": float64(balance) / 100.0,
 			"isPaid":           isPaid,
 		})
 	}
-	
-	if schedule == nil { schedule = []gin.H{} }
+
+	if schedule == nil {
+		schedule = []gin.H{}
+	}
 	c.JSON(200, schedule)
 }
-
 
 func (h *HandlerDriver) GetEmployeesHandler(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), "SELECT * FROM fn_get_all_employees()")
@@ -394,15 +399,16 @@ func (h *HandlerDriver) GetEmployeesHandler(c *gin.Context) {
 			continue
 		}
 		employees = append(employees, gin.H{
-			"id": id, "firstName": fn, "lastName": ln, 
+			"id": id, "firstName": fn, "lastName": ln,
 			"position": pos, "login": login, "role": role,
 		})
 	}
-	
-	if employees == nil { employees = []gin.H{} }
+
+	if employees == nil {
+		employees = []gin.H{}
+	}
 	c.JSON(200, employees)
 }
-
 
 func (h *HandlerDriver) GetLogsHandler(c *gin.Context) {
 	action := c.Query("action")
@@ -448,10 +454,11 @@ func (h *HandlerDriver) GetLogsHandler(c *gin.Context) {
 		})
 	}
 
-	if logs == nil { logs = []gin.H{} }
+	if logs == nil {
+		logs = []gin.H{}
+	}
 	c.JSON(200, logs)
 }
-
 
 func (h *HandlerDriver) CreateBackupHandler(c *gin.Context) {
 	role, exists := c.Get("role")
@@ -476,7 +483,7 @@ func (h *HandlerDriver) CreateBackupHandler(c *gin.Context) {
 	}
 
 	userId, _ := c.Get("userId")
-	LogAction(context.Background(),tx , userId.(int64), "BACKUP_DB", "system", 0, map[string]string{"file": filename})
+	LogAction(context.Background(), tx, userId.(int64), "BACKUP_DB", "system", 0, map[string]string{"file": filename})
 
 	if err := tx.Commit(ctx); err != nil {
 		c.JSON(500, gin.H{"error": "Commit failed"})
@@ -488,7 +495,6 @@ func (h *HandlerDriver) CreateBackupHandler(c *gin.Context) {
 		"file":    filename,
 	})
 }
-
 
 func (h *HandlerDriver) GetMyLoansHandler(c *gin.Context) {
 	userID, _ := c.Get("userId")
@@ -504,7 +510,7 @@ func (h *HandlerDriver) GetMyLoansHandler(c *gin.Context) {
 	for rows.Next() {
 		var id int64
 		var num, status, prodName string
-		var amount, balance float64
+		var amount, balance int64
 		var date time.Time
 		var paid, total int64
 
@@ -513,23 +519,24 @@ func (h *HandlerDriver) GetMyLoansHandler(c *gin.Context) {
 			log.Println("Scan error:", err)
 			continue
 		}
-		
+
 		loans = append(loans, gin.H{
 			"id":             id,
 			"contractNumber": num,
-			"amount":         amount,
+			"amount":         float64(amount) / 100.0,
 			"status":         status,
 			"startDate":      date,
 			"productName":    prodName,
-			"balance":        balance,
+			"balance":        float64(balance) / 100.0,
 			"progress":       fmt.Sprintf("%d/%d", paid, total),
 		})
 	}
-	
-	if loans == nil { loans = []gin.H{} }
+
+	if loans == nil {
+		loans = []gin.H{}
+	}
 	c.JSON(200, loans)
 }
-
 
 func (h *HandlerDriver) MakePaymentHandler(c *gin.Context) {
 	var req models.PaymentRequest
@@ -550,7 +557,7 @@ func (h *HandlerDriver) MakePaymentHandler(c *gin.Context) {
 
 	var contractID int64
 	var paymentAmount float64
-	
+
 	err = tx.QueryRow(ctx, `
 		SELECT rs.contract_id, rs.payment_amount
 		FROM repayment_schedule rs
@@ -565,7 +572,7 @@ func (h *HandlerDriver) MakePaymentHandler(c *gin.Context) {
 	}
 
 	_, err = tx.Exec(ctx, "CALL sp_make_payment($1)", req.ScheduleID)
-	
+
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -584,7 +591,6 @@ func (h *HandlerDriver) MakePaymentHandler(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Payment successful"})
 }
 
-
 func (h *HandlerDriver) EarlyRepaymentHandler(c *gin.Context) {
 	var req models.EarlyRepaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -602,9 +608,9 @@ func (h *HandlerDriver) EarlyRepaymentHandler(c *gin.Context) {
 	}
 	defer tx.Rollback(ctx)
 
-	var paidAmount float64
+	var paidAmount int64
 
-	err = tx.QueryRow(ctx, "CALL sp_early_repayment($1, $2, NULL)", 
+	err = tx.QueryRow(ctx, "CALL sp_early_repayment($1, $2, NULL)",
 		req.ContractID, userID).Scan(&paidAmount)
 
 	if err != nil {
@@ -613,7 +619,7 @@ func (h *HandlerDriver) EarlyRepaymentHandler(c *gin.Context) {
 	}
 
 	LogAction(ctx, tx, userID.(int64), "EARLY_REPAYMENT", "loan_contracts", req.ContractID, map[string]string{
-		"amount": fmt.Sprintf("%.2f", paidAmount),
+		"amount": fmt.Sprintf("%.2f", float64(paidAmount)/100.0),
 		"method": "via_stored_procedure",
 	})
 
@@ -622,9 +628,11 @@ func (h *HandlerDriver) EarlyRepaymentHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, gin.H{"message": "Кредит погашен досрочно", "paidAmount": paidAmount})
+	c.JSON(200, gin.H{
+		"message":    "Кредит погашен досрочно",
+		"paidAmount": float64(paidAmount) / 100.0,
+	})
 }
-
 
 func (h *HandlerDriver) GetLoanOperationsHandler(c *gin.Context) {
 	contractID := c.Param("id")
@@ -648,20 +656,21 @@ func (h *HandlerDriver) GetLoanOperationsHandler(c *gin.Context) {
 
 		ops = append(ops, gin.H{
 			"type":   opType,
-			"amount": amount,
+			"amount": float64(amount) / 100.0,
 			"date":   date,
 			"desc":   desc,
 		})
 	}
 
-	if ops == nil { ops = []gin.H{} }
+	if ops == nil {
+		ops = []gin.H{}
+	}
 	c.JSON(200, ops)
 }
 
-
 func (h *HandlerDriver) GetStatsHandler(c *gin.Context) {
 	var jsonStats []byte
-	
+
 	err := h.db.QueryRow(c.Request.Context(), "SELECT fn_get_dashboard_stats()").Scan(&jsonStats)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to get stats: " + err.Error()})
@@ -670,7 +679,6 @@ func (h *HandlerDriver) GetStatsHandler(c *gin.Context) {
 
 	c.Data(200, "application/json", jsonStats)
 }
-
 
 func (h *HandlerDriver) GetFinanceReportHandler(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), "SELECT * FROM fn_get_financial_report()")
@@ -683,25 +691,26 @@ func (h *HandlerDriver) GetFinanceReportHandler(c *gin.Context) {
 	var report []gin.H
 	for rows.Next() {
 		var month string
-		var issued, repaid, net float64
+		var issued, repaid, net int64
 		rows.Scan(&month, &issued, &repaid, &net)
-		
+
 		report = append(report, gin.H{
 			"month":  month,
-			"issued": issued,
-			"repaid": repaid,
-			"net":    net,
+			"issued": float64(issued) / 100.0,
+			"repaid": float64(repaid) / 100.0,
+			"net":    float64(net) / 100.0,
 		})
 	}
-	if report == nil { report = []gin.H{} }
+	if report == nil {
+		report = []gin.H{}
+	}
 	c.JSON(200, report)
 }
 
-
 func LogAction(ctx context.Context, tx pgx.Tx, userID int64, action string, entity string, entityID int64, details map[string]string) {
-	_, err := tx.Exec(ctx, "CALL sp_audit_log($1, $2, $3, $4, $5)", 
+	_, err := tx.Exec(ctx, "CALL sp_audit_log($1, $2, $3, $4, $5)",
 		userID, action, entity, entityID, details)
-	
+
 	if err != nil {
 		log.Printf("AUDIT ERROR: %v", err)
 	}
