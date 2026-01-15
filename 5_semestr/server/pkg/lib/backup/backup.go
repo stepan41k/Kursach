@@ -30,7 +30,10 @@ func PerformBackup() (string, error) {
 
 	cmd := exec.Command("pg_dump", "-h", pgHost, "-U", pgUser, "-d", pgDb)
 
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PGPASSWORD=%s", pgPwd))
+	cmd.Env = append(os.Environ(), 
+        fmt.Sprintf("PGPASSWORD=%s", pgPwd),
+        "PGSSLMODE=disable",
+    )
 
 	cmd.Stdout = outFile
 	cmd.Stderr = os.Stderr 

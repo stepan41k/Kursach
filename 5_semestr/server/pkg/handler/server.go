@@ -34,6 +34,12 @@ func (h *HandlerDriver) RegisterHandler(c *gin.Context) {
 		return
 	}
 
+	hashedPwd, err := password.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Не удалось обработать пароль"})
+		return
+	}
+
 	ctx := c.Request.Context()
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -46,7 +52,7 @@ func (h *HandlerDriver) RegisterHandler(c *gin.Context) {
 
 	err = tx.QueryRow(ctx, "CALL sp_register_employee($1, $2, $3, $4, $5, $6, NULL)",
 		req.Login,
-		req.Password,
+		hashedPwd,
 		req.FirstName,
 		req.LastName,
 		req.Position,
@@ -94,7 +100,17 @@ func (h *HandlerDriver) LoginHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Password != pwdHash {
+	match := password.CheckPasswordHash(req.Password, pwdHash)
+	
+	if !match {
+        if req.Password == pwdHash {
+            match = true
+			newHash, _ := password.HashPassword(req.Password)
+			h.db.Exec(c.Request.Context(), `UPDATE users SET password_hash = $1 WHERE login = $2`, newHash, req.Login)
+        }
+    }
+
+	if !match {
 		c.JSON(401, gin.H{"error": "Неверный логин или пароль"})
 		return
 	}
@@ -173,6 +189,12 @@ func (h *HandlerDriver) CreateClient(c *gin.Context) {
 	genLogin := password.GenerateRandomPassword(8)
 	genPassword := password.GenerateRandomPassword(8)
 
+	hashedPwd, err := password.HashPassword(genPassword)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Не удалось обработать пароль"})
+		return
+	}
+
 	ctx := c.Request.Context()
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -184,7 +206,7 @@ func (h *HandlerDriver) CreateClient(c *gin.Context) {
 	var clientID int64
 
 	err = tx.QueryRow(ctx, `CALL sp_create_client($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL)`,
-		genLogin, genPassword,
+		genLogin, hashedPwd,
 		req.FirstName, req.LastName, req.MiddleName,
 		req.PassportSeries, req.PassportNumber, req.PassportIssued,
 		req.DateOfBirth, req.Address, req.Phone, req.Email,
