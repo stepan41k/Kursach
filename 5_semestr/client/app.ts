@@ -418,7 +418,6 @@ window.router = async (route: string) => {
             <p style="margin-bottom: 8px;">Вы вошли как: <b>${
 							currentUser!.role
 						}</b></p>
-            <p>Используйте меню слева для навигации.</p>
         </div>`
 	} else if (route === 'clients') {
 		const clients = await api.getClients()
@@ -427,7 +426,7 @@ window.router = async (route: string) => {
 				.map(
 					(c: Client) => `
                 <tr>
-                    <td>${c.lastName} ${c.firstName}</td>
+                    <td>${c.lastName} ${c.firstName} ${c.middleName}</td>
                     <td>${c.passportSeries} ${c.passportNumber}</td>
                     <td>${c.phone}</td>
                     <td><button class="btn btn-secondary" onclick="window.openNewLoanModal(${c.id})">Выдать кредит</button></td>
