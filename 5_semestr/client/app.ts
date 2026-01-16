@@ -81,30 +81,42 @@ interface LoanContract {
 
 
 class ApiService {
+	private isRefreshing = false
+
 	private async request(endpoint: string, method: string = 'GET', body?: any) {
 		try {
-			const token = localStorage.getItem('authToken')
-
-			const headers: HeadersInit = {
-				'Content-Type': 'application/json',
-			}
-
-			if (token) {
-				headers['Authorization'] = `Bearer ${token}`
-			}
-
 			const opts: RequestInit = {
 				method,
-				headers,
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
 			}
 
 			if (body) opts.body = JSON.stringify(body)
 
-			const res = await fetch(`${API_URL}${endpoint}`, opts)
+			let res = await fetch(`${API_URL}${endpoint}`, opts)
 
-			if (res.status === 401) {
-				window.logout()
-				throw new Error('Сессия истекла. Войдите снова.')
+			if (
+				res.status === 401 &&
+				!this.isRefreshing &&
+				endpoint !== '/login' &&
+				endpoint !== '/refresh'
+			) {
+				this.isRefreshing = true
+				console.log('Access token expired. Trying refresh...')
+
+				const refreshRes = await fetch(`${API_URL}/refresh`, {
+					method: 'POST',
+					credentials: 'include',
+				})
+
+				if (refreshRes.ok) {
+					this.isRefreshing = false
+					res = await fetch(`${API_URL}${endpoint}`, opts)
+				} else {
+					this.isRefreshing = false
+					window.logout()
+					throw new Error('Сессия истекла')
+				}
 			}
 
 			if (!res.ok) {
@@ -114,31 +126,17 @@ class ApiService {
 			return await res.json()
 		} catch (e: any) {
 			console.error(e)
-			alert(`Ошибка: ${e.message}`)
+			alert(`Error: ${e.message}`)
 			return null
 		}
 	}
 
 	async login(l: string, p: string) {
-		try {
-			const res = await fetch(`${API_URL}/login`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ login: l, password: p }),
-			})
+		return this.request('/login', 'POST', { login: l, password: p })
+	}
 
-			if (!res.ok) throw new Error('Ошибка входа')
-
-			const data = await res.json()
-
-			if (data.token) {
-				localStorage.setItem('authToken', data.token)
-			}
-
-			return data
-		} catch (e) {
-			return null
-		}
+	async logout() {
+		await this.request('/logout', 'POST')
 	}
 
 	async getLoanById(id: number) {
@@ -388,10 +386,10 @@ window.handleLogin = async () => {
 	}
 }
 
-window.logout = () => {
+window.logout = async () => {
+	await api.logout()
 	currentUser = null
-	localStorage.removeItem('authToken')
-	localStorage.removeItem('userData')
+	localStorage.removeItem('userData') 
 	renderLogin()
 }
 
@@ -1613,10 +1611,9 @@ function initStatsChart(data: any[]) {
 }
 
 function initApp() {
-	const savedToken = localStorage.getItem('authToken')
 	const savedUser = localStorage.getItem('userData')
 
-	if (savedToken && savedUser) {
+	if (savedUser) {
 		try {
 			currentUser = JSON.parse(savedUser)
 			window.router('dashboard')
