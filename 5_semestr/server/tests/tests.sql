@@ -18,6 +18,8 @@ BEGIN
         v_manager_user_id
     );
 
+    RAISE NOTICE 'TEST 1: register_employee passed';
+
     SELECT id INTO v_manager_employee_id FROM employees WHERE user_id = v_manager_user_id;
     
     CALL sp_create_client(
@@ -25,6 +27,8 @@ BEGIN
         '9999'::VARCHAR, '888777'::VARCHAR, 'XYZ'::VARCHAR, '2000-01-01'::VARCHAR, 'Ad'::VARCHAR, '895612462'::VARCHAR, 'cl@mail.com'::VARCHAR,
         v_client_id
     );
+
+    RAISE NOTICE 'TEST 2: create_client passed';
 
     CALL sp_issue_loan(
         v_client_id, 
@@ -34,6 +38,11 @@ BEGIN
         v_manager_employee_id,
         v_contract_id
     );
+
+    RAISE NOTICE 'TEST 3: issue loan to client passed';
     
     RAISE NOTICE 'Tests passed successfully';
+
+    ROLLBACK;
+
 END $$;
