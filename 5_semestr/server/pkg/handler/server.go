@@ -115,14 +115,21 @@ func (h *HandlerDriver) LoginHandler(c *gin.Context) {
 		return
 	}
 
-	expirationTime := time.Now().Add(24 * time.Hour)
-	claims := &auth.Claims{
-		UserID:           userID,
-		Role:             roleName,
-		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
+	accessToken, err := auth.GenerateToken(userID, roleName, auth.AccessTokenDuration)
+	if err != nil {
+		log.Println(err)
+		c.JSON(500, gin.H{"error": "Token generation failed"})
+		return
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, _ := token.SignedString(auth.JWTKey)
+	refreshToken, err := auth.GenerateToken(userID, roleName, auth.RefreshTokenDuration)
+	if err != nil {
+		log.Println(err)
+		c.JSON(500, gin.H{"error": "Token generation failed"})
+		return
+	}
+
+	c.SetCookie("access_token", accessToken, int(auth.AccessTokenDuration.Seconds()), "/", "", false, true)
+	c.SetCookie("refresh_token", refreshToken, int(auth.RefreshTokenDuration.Seconds()), "/api/refresh", "", false, true)
 
 	fullName := "Пользователь"
 	if fName != nil && lName != nil {
@@ -133,13 +140,13 @@ func (h *HandlerDriver) LoginHandler(c *gin.Context) {
 		go mail.SendLoginEmail(*email, fullName, c.ClientIP())
 	}
 
-	c.JSON(200, models.LoginResponse{
-		Token: tokenString,
-		User: struct {
-			ID       int64  `json:"id"`
-			Role     string `json:"role"`
-			FullName string `json:"name"`
-		}{userID, roleName, fullName},
+	c.JSON(200, gin.H{
+		"message": "Login successful",
+		"user": gin.H{
+			"id":   userID,
+			"role": roleName,
+			"name": fullName,
+		},
 	})
 }
 
@@ -728,6 +735,41 @@ func (h *HandlerDriver) GetFinanceReportHandler(c *gin.Context) {
 	}
 	c.JSON(200, report)
 }
+
+
+func RefreshHandler(c *gin.Context) {
+	cookie, err := c.Cookie("refresh_token")
+	if err != nil {
+		c.JSON(401, gin.H{"error": "Refresh token required"})
+		return
+	}
+
+	claims := &auth.Claims{}
+	token, err := jwt.ParseWithClaims(cookie, claims, func(token *jwt.Token) (interface{}, error) {
+		return auth.JWTKey, nil
+	})
+
+	if err != nil || !token.Valid {
+		c.JSON(401, gin.H{"error": "Invalid refresh token"})
+		return
+	}
+
+	newAccess, _ := auth.GenerateToken(claims.UserID, claims.Role, auth.AccessTokenDuration)
+	newRefresh, _ := auth.GenerateToken(claims.UserID, claims.Role, auth.RefreshTokenDuration)
+
+	c.SetCookie("access_token", newAccess, int(auth.AccessTokenDuration.Seconds()), "/", "", false, true)
+	c.SetCookie("refresh_token", newRefresh, int(auth.RefreshTokenDuration.Seconds()), "/api/refresh", "", false, true)
+
+	c.JSON(200, gin.H{"message": "Tokens refreshed"})
+}
+
+
+func LogoutHandler(c *gin.Context) {
+	c.SetCookie("access_token", "", -1, "/", "", false, true)
+	c.SetCookie("refresh_token", "", -1, "/api/refresh", "", false, true)
+	c.JSON(200, gin.H{"message": "Logged out"})
+}
+
 
 func LogAction(ctx context.Context, tx pgx.Tx, userID int64, action string, entity string, entityID int64, details map[string]string) {
 	_, err := tx.Exec(ctx, "CALL sp_audit_log($1, $2, $3, $4, $5)",

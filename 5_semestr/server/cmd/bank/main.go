@@ -62,6 +62,8 @@ func main() {
 	api := r.Group("/api")
 	{
 		api.POST("/login", driver.LoginHandler)
+		api.POST("/refresh", handler.RefreshHandler)
+        api.POST("/logout", handler.LogoutHandler)
 		
 		protected := api.Group("/")
 		protected.Use(auth.AuthMiddleware())

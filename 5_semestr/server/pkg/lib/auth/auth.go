@@ -2,13 +2,19 @@ package auth
 
 import (
 	"net/http"
-	"strings"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var JWTKey = []byte("secret_key")
+var JWTKey = []byte(os.Getenv("JWTKey"))
+
+const (
+	AccessTokenDuration  = 15 * time.Minute 
+	RefreshTokenDuration = 30 * 24 * time.Hour
+)
 
 type Claims struct {
 	UserID int64  `json:"userId"`
@@ -18,21 +24,13 @@ type Claims struct {
 
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+		tokenString, err := c.Cookie("access_token")
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
 
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid header format"})
-			return
-		}
-
-		tokenString := parts[1]
 		claims := &Claims{}
-
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return JWTKey, nil
 		})
@@ -46,4 +44,17 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Set("role", claims.Role)
 		c.Next()
 	}
+}
+
+
+func GenerateToken(userID int64, role string, duration time.Duration) (string, error) {
+	claims := &Claims{
+		UserID: userID,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(JWTKey)
 }
